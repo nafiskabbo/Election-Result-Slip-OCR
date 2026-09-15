@@ -3,7 +3,14 @@ import { api } from "../api.js";
 import CameraCapture, { openRearCamera } from "./CameraCapture.jsx";
 import InfoTip from "./InfoTip.jsx";
 
-export default function Capture({ busy, setBusy, onDone, notify, onCameraActiveChange }) {
+export default function Capture({
+  busy,
+  setBusy,
+  onDone,
+  notify,
+  onCameraActiveChange,
+  registerCloseCamera,
+}) {
   const [over, setOver] = useState(false);
   const [note, setNote] = useState("");
   const [cameraOpen, setCameraOpen] = useState(false);
@@ -15,6 +22,7 @@ export default function Capture({ busy, setBusy, onDone, notify, onCameraActiveC
   streamRef.current = liveStream;
   const galleryInputRef = useRef(null);
   const cameraInputRef = useRef(null);
+  const pushedCameraRef = useRef(false);
 
   useEffect(() => () => {
     pendingRef.current.forEach((item) => URL.revokeObjectURL(item.preview));
@@ -25,6 +33,41 @@ export default function Capture({ busy, setBusy, onDone, notify, onCameraActiveC
     onCameraActiveChange?.(cameraOpen && !!liveStream);
     return () => onCameraActiveChange?.(false);
   }, [cameraOpen, liveStream, onCameraActiveChange]);
+
+  const closeCamera = ({ fromHistory = false } = {}) => {
+    if (streamRef.current) {
+      streamRef.current.getTracks().forEach((track) => track.stop());
+    }
+    setLiveStream(null);
+    setCameraOpen(false);
+    if (!fromHistory && pushedCameraRef.current) {
+      pushedCameraRef.current = false;
+      window.history.back();
+    } else {
+      pushedCameraRef.current = false;
+    }
+  };
+
+  useEffect(() => {
+    registerCloseCamera?.(closeCamera);
+    return () => registerCloseCamera?.(null);
+  });
+
+  useEffect(() => {
+    if (!(cameraOpen && liveStream)) return undefined;
+    window.history.pushState({ camera: true, page: "capture" }, "");
+    pushedCameraRef.current = true;
+    const onPop = () => {
+      pushedCameraRef.current = false;
+      if (streamRef.current) {
+        streamRef.current.getTracks().forEach((track) => track.stop());
+      }
+      setLiveStream(null);
+      setCameraOpen(false);
+    };
+    window.addEventListener("popstate", onPop);
+    return () => window.removeEventListener("popstate", onPop);
+  }, [cameraOpen, liveStream]);
 
   const runFiles = async (fileList) => {
     const files = Array.from(fileList || []);
@@ -67,14 +110,6 @@ export default function Capture({ busy, setBusy, onDone, notify, onCameraActiveC
     });
   };
 
-  const closeCamera = () => {
-    if (liveStream) {
-      liveStream.getTracks().forEach((track) => track.stop());
-    }
-    setLiveStream(null);
-    setCameraOpen(false);
-  };
-
   const openNativeCamera = () => {
     cameraInputRef.current?.click();
   };
@@ -95,12 +130,12 @@ export default function Capture({ busy, setBusy, onDone, notify, onCameraActiveC
   return (
     <section className={cameraOpen && liveStream ? "capture-camera" : ""}>
       {!(cameraOpen && liveStream) && (
-        <header className="page-head">
+        <header className="page-head desktop-only-flex">
           <div className="page-title-row">
             <h1>Capture</h1>
             <InfoTip label="Capture help">
               <p>Photograph each page so the slip fills the box. Everything outside the box is dropped.</p>
-              <p>JPEG, PNG, and PDF are accepted. Multi-page slips can be captured one page at a time, then uploaded together.</p>
+              <p>JPEG, PNG, and PDF are accepted. Capture pages one at a time, then upload together.</p>
             </InfoTip>
           </div>
         </header>
@@ -112,9 +147,9 @@ export default function Capture({ busy, setBusy, onDone, notify, onCameraActiveC
           disabled={busy}
           pageCount={pending.length}
           onCapture={addCameraPage}
-          onClose={closeCamera}
+          onClose={() => closeCamera({ fromHistory: false })}
           onFallback={() => {
-            closeCamera();
+            closeCamera({ fromHistory: false });
             openNativeCamera();
           }}
         />
@@ -167,9 +202,9 @@ export default function Capture({ busy, setBusy, onDone, notify, onCameraActiveC
       {pending.length > 0 && !(cameraOpen && liveStream) && (
         <div className="capture-queue">
           <div className="capture-queue-head">
-            <h2>{pending.length} page{pending.length === 1 ? "" : "s"}</h2>
+            <h2>{pending.length} page{pending.length === 1 ? "" : "s"} ready</h2>
             <button className="btn" type="button" disabled={busy} onClick={uploadPending}>
-              Upload
+              Upload pages
             </button>
           </div>
           <ul className="capture-thumbs">

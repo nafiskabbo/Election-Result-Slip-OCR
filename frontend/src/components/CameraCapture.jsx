@@ -1,5 +1,4 @@
 import { useCallback, useEffect, useRef, useState } from "react";
-import InfoTip from "./InfoTip.jsx";
 
 export async function openRearCamera() {
   if (!navigator.mediaDevices?.getUserMedia) {
@@ -195,7 +194,7 @@ export default function CameraCapture({ stream, disabled, pageCount = 0, onCaptu
             <span className="camera-corner camera-corner-bl" />
             <span className="camera-corner camera-corner-br" />
           </div>
-          <p className="camera-guide">Only this box is saved</p>
+          <p className="camera-guide">Fill the box with the slip</p>
         </div>
         <div className="camera-status">
           <span className={error ? "fail" : ""}>{status}</span>
@@ -205,7 +204,7 @@ export default function CameraCapture({ stream, disabled, pageCount = 0, onCaptu
 
       <div className="camera-toolbar">
         <button type="button" className="btn ghost camera-side" onClick={handleClose} disabled={disabled}>
-          Close
+          Close camera
         </button>
 
         <button
@@ -217,13 +216,9 @@ export default function CameraCapture({ stream, disabled, pageCount = 0, onCaptu
         />
 
         <div className="camera-side camera-side-right">
-          <InfoTip label="Camera tips" align="end">
-            <p>Fill the box with the slip. Everything outside the box is discarded.</p>
-            <p>Hold steady, avoid glare, and capture each page before uploading.</p>
-          </InfoTip>
           {onFallback && (
             <button type="button" className="btn ghost" onClick={onFallback} disabled={disabled}>
-              App
+              Phone camera
             </button>
           )}
         </div>

@@ -1,35 +1,84 @@
-import { useState } from "react";
+import { useEffect, useRef, useState } from "react";
 import { api, apiUrl, statusLabel } from "../api.js";
-import InfoTip from "./InfoTip.jsx";
+import { Icon } from "./Icons.jsx";
+import Sheet from "./Sheet.jsx";
 
-export default function Inbox({ slips, counts, onRefresh, onOpen, onCapture, notify }) {
-  const [search, setSearch] = useState("");
-  const [status, setStatus] = useState("");
-  const [ballotType, setBallotType] = useState("");
+export default function Inbox({
+  slips,
+  counts,
+  filters,
+  onFiltersChange,
+  onOpen,
+  onCapture,
+  notify,
+}) {
+  const [search, setSearch] = useState(filters.search || "");
+  const [status, setStatus] = useState(filters.status || "");
+  const [ballotType, setBallotType] = useState(filters.ballot_type || "");
+  const [sheetOpen, setSheetOpen] = useState(false);
+  const searchTimer = useRef(null);
 
-  const apply = () => onRefresh({ search, status, ballot_type: ballotType });
+  useEffect(() => {
+    setSearch(filters.search || "");
+    setStatus(filters.status || "");
+    setBallotType(filters.ballot_type || "");
+  }, [filters.search, filters.status, filters.ballot_type]);
+
+  const commit = (next) => {
+    onFiltersChange({
+      search: next.search ?? search,
+      status: next.status ?? status,
+      ballot_type: next.ballot_type ?? ballotType,
+    });
+  };
+
+  const onSearchChange = (value) => {
+    setSearch(value);
+    window.clearTimeout(searchTimer.current);
+    searchTimer.current = window.setTimeout(() => {
+      commit({ search: value });
+    }, 280);
+  };
+
+  useEffect(() => () => window.clearTimeout(searchTimer.current), []);
 
   const clear = async () => {
     if (!window.confirm("Clear every captured slip from this desk?")) return;
     await api.clearSlips();
-    await onRefresh();
+    setSearch("");
+    setStatus("");
+    setBallotType("");
+    await onFiltersChange({ search: "", status: "", ballot_type: "" });
     notify("Inbox cleared");
   };
 
+  const applySheet = () => {
+    commit({ status, ballot_type: ballotType });
+    setSheetOpen(false);
+  };
+
+  const filterActive = Boolean(filters.status || filters.ballot_type);
+
   return (
     <section>
-      <header className="page-head">
+      <header className="page-head desktop-only-flex">
         <div className="page-title-row">
           <h1>Inbox</h1>
-          <InfoTip label="Inbox help">
-            <p>Slips waiting to be checked. Incomplete sets stay here until missing pages arrive.</p>
-          </InfoTip>
         </div>
         <div className="toolbar page-actions">
-          <button type="button" className="btn ghost" onClick={clear}>Clear</button>
-          <button type="button" className="btn" onClick={onCapture}>Capture</button>
+          <button type="button" className="btn ghost" onClick={clear}>Clear inbox</button>
+          <button type="button" className="btn" onClick={onCapture}>Capture slips</button>
         </div>
       </header>
+
+      <div className="mobile-inbox-actions mobile-only">
+        <button type="button" className="btn ghost icon-text" onClick={clear}>
+          <Icon name="clear" size={16} /> Clear
+        </button>
+        <button type="button" className="btn icon-text" onClick={onCapture}>
+          <Icon name="capture" size={16} /> Capture
+        </button>
+      </div>
 
       <div className="counts">
         <div className="count"><b>{counts.total}</b><span>Total</span></div>
@@ -39,31 +88,61 @@ export default function Inbox({ slips, counts, onRefresh, onOpen, onCapture, not
         <div className="count"><b>{counts.flagged}</b><span>Flagged</span></div>
       </div>
 
-      <div className="toolbar">
+      <div className="toolbar inbox-toolbar desktop-only-flex">
         <input
           className="search"
           value={search}
-          placeholder="Search VD, station…"
-          enterKeyHint="search"
-          onChange={(e) => setSearch(e.target.value)}
-          onKeyDown={(e) => e.key === "Enter" && apply()}
+          placeholder="Search VD, station, or reference"
+          onChange={(e) => onSearchChange(e.target.value)}
         />
-        <select value={ballotType} onChange={(e) => setBallotType(e.target.value)}>
+        <select
+          value={ballotType}
+          onChange={(e) => {
+            setBallotType(e.target.value);
+            commit({ ballot_type: e.target.value });
+          }}
+        >
           <option value="">All ballots</option>
           <option value="Provincial">Provincial</option>
           <option value="Regional">Regional</option>
           <option value="National">National</option>
         </select>
-        <select value={status} onChange={(e) => setStatus(e.target.value)}>
+        <select
+          value={status}
+          onChange={(e) => {
+            setStatus(e.target.value);
+            commit({ status: e.target.value });
+          }}
+        >
           <option value="">All statuses</option>
           <option value="pending_review">Ready</option>
-          <option value="incomplete">Missing</option>
+          <option value="incomplete">Missing pages</option>
           <option value="approved">Approved</option>
           <option value="flagged">Flagged</option>
           <option value="rejected">Rejected</option>
         </select>
-        <button type="button" className="btn ghost" onClick={apply}>Filter</button>
-        <a className="btn ghost" href={apiUrl("/api/export/csv")}>CSV</a>
+        <a className="btn ghost" href={apiUrl("/api/export/csv")}>Export CSV</a>
+      </div>
+
+      <div className="toolbar inbox-toolbar mobile-only">
+        <input
+          className="search"
+          value={search}
+          placeholder="Search VD, station…"
+          enterKeyHint="search"
+          onChange={(e) => onSearchChange(e.target.value)}
+        />
+        <button
+          type="button"
+          className={`icon-btn ${filterActive ? "active" : ""}`}
+          aria-label="Filters"
+          onClick={() => setSheetOpen(true)}
+        >
+          <Icon name="filter" size={20} />
+        </button>
+        <a className="icon-btn" href={apiUrl("/api/export/csv")} aria-label="Export CSV">
+          <Icon name="export" size={20} />
+        </a>
       </div>
 
       <div className="table-wrap desktop-only">
@@ -152,6 +231,48 @@ export default function Inbox({ slips, counts, onRefresh, onOpen, onCapture, not
           );
         })}
       </div>
+
+      <Sheet
+        title="Filters"
+        open={sheetOpen}
+        onClose={() => setSheetOpen(false)}
+        footer={(
+          <button type="button" className="btn" onClick={applySheet}>Apply filters</button>
+        )}
+      >
+        <label className="sheet-field">
+          Ballot type
+          <select value={ballotType} onChange={(e) => setBallotType(e.target.value)}>
+            <option value="">All ballots</option>
+            <option value="Provincial">Provincial</option>
+            <option value="Regional">Regional</option>
+            <option value="National">National</option>
+          </select>
+        </label>
+        <label className="sheet-field">
+          Status
+          <select value={status} onChange={(e) => setStatus(e.target.value)}>
+            <option value="">All statuses</option>
+            <option value="pending_review">Ready</option>
+            <option value="incomplete">Missing pages</option>
+            <option value="approved">Approved</option>
+            <option value="flagged">Flagged</option>
+            <option value="rejected">Rejected</option>
+          </select>
+        </label>
+        <button
+          type="button"
+          className="btn ghost"
+          onClick={() => {
+            setStatus("");
+            setBallotType("");
+            onFiltersChange({ search, status: "", ballot_type: "" });
+            setSheetOpen(false);
+          }}
+        >
+          Clear filters
+        </button>
+      </Sheet>
     </section>
   );
 }

@@ -1,6 +1,6 @@
 import { useEffect, useState } from "react";
 import { api } from "../api.js";
-import InfoTip from "./InfoTip.jsx";
+import { formatExactTime, formatRelativeTime } from "../time.js";
 
 export default function Log() {
   const [logs, setLogs] = useState([]);
@@ -11,12 +11,9 @@ export default function Log() {
 
   return (
     <section>
-      <header className="page-head">
+      <header className="page-head desktop-only-flex">
         <div className="page-title-row">
           <h1>Log</h1>
-          <InfoTip label="Log help">
-            <p>Every capture, edit, link, and approval is appended here. Old rows are not rewritten.</p>
-          </InfoTip>
         </div>
       </header>
       <div className="audit-list">
@@ -25,7 +22,9 @@ export default function Log() {
           <article className="audit-item" key={item.id}>
             <header>
               <strong>{item.action.replaceAll("_", " ")}</strong>
-              <span className="sub">{item.timestamp}</span>
+              <time className="sub" dateTime={item.timestamp} title={formatExactTime(item.timestamp)}>
+                {formatRelativeTime(item.timestamp)}
+              </time>
             </header>
             <p>
               {item.user_name || item.user_id}

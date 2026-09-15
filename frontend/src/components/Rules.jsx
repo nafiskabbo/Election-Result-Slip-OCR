@@ -17,7 +17,7 @@ export default function Rules({ notify }) {
 
   return (
     <section>
-      <header className="page-head">
+      <header className="page-head desktop-only-flex">
         <div className="page-title-row">
           <h1>Rules</h1>
           <InfoTip label="Rules help">
@@ -25,6 +25,12 @@ export default function Rules({ notify }) {
           </InfoTip>
         </div>
       </header>
+      <div className="mobile-rules-tip mobile-only">
+        <InfoTip label="Rules help">
+          <p>Critical failures block approval. Warnings stay visible but do not stop a supervisor.</p>
+        </InfoTip>
+        <span className="sub">Severity meanings</span>
+      </div>
       <div className="rule-list">
         {rules.map((rule) => (
           <article className="rule" key={rule.rule_code}>

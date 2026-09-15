@@ -99,5 +99,12 @@ export function fileUrl(path) {
 }
 
 export function statusLabel(status) {
-  return (status || "").replaceAll("_", " ");
+  const labels = {
+    pending_review: "Ready",
+    incomplete: "Missing pages",
+    approved: "Approved",
+    rejected: "Rejected",
+    flagged: "Flagged",
+  };
+  return labels[status] || (status || "").replaceAll("_", " ");
 }
