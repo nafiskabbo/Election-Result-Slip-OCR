@@ -1,9 +1,8 @@
-import sqlite3
-import json
 import uuid
 from datetime import datetime, timezone
-from typing import Dict, Any, List, Tuple
-from backend.database import get_db_connection
+from typing import Any, Dict
+
+from backend.database import get_db_connection, parse_config_json
 
 class ValidationEngine:
     def __init__(self):
@@ -21,7 +20,7 @@ class ValidationEngine:
             raise ValueError(f"Slip {slip_id} not found.")
 
         # Fetch active rules
-        cursor.execute("SELECT * FROM validation_rules WHERE is_active = 1")
+        cursor.execute("SELECT * FROM validation_rules WHERE is_active")
         active_rules = cursor.fetchall()
 
         # Fetch pages
@@ -56,7 +55,7 @@ class ValidationEngine:
             code = rule["rule_code"]
             name = rule["name"]
             severity = rule["severity"]
-            config = json.loads(rule["config_json"]) if rule["config_json"] else {}
+            config = parse_config_json(rule["config_json"])
 
             status = "pass"
             message = f"{name}: Validation passed."

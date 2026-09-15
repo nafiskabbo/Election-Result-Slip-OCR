@@ -4,6 +4,29 @@
 name: ballot-ocr
 
 services:
+  db:
+    image: postgres:16-alpine
+    container_name: ballot-ocr-db
+    restart: unless-stopped
+    environment:
+      POSTGRES_USER: ballot
+      POSTGRES_PASSWORD: ${POSTGRES_PASSWORD:-ballot_local_dev}
+      POSTGRES_DB: ballot
+    ports:
+      - "127.0.0.1:5433:5432"
+    volumes:
+      - ballot-ocr-pgdata:/var/lib/postgresql/data
+      - ./schema/ballot.sql:/docker-entrypoint-initdb.d/01-ballot.sql:ro
+      - ./schema/seed.sql:/docker-entrypoint-initdb.d/02-seed.sql:ro
+    healthcheck:
+      test: ["CMD-SHELL", "pg_isready -U ballot -d ballot"]
+      interval: 5s
+      timeout: 5s
+      retries: 12
+      start_period: 10s
+    mem_limit: 256m
+    pids_limit: 128
+
   api:
     build:
       context: .
@@ -11,13 +34,16 @@ services:
     image: ballot-ocr:local
     container_name: ballot-ocr-api
     restart: unless-stopped
+    depends_on:
+      db:
+        condition: service_healthy
     ports:
       - "127.0.0.1:8010:8000"
     environment:
       PORT: "8000"
       DATA_DIR: /data
-      BALLOT_DB_PATH: /data/ballot_ocr.db
       STORAGE_DIR: /data/storage
+      DATABASE_URL: postgresql://ballot:${POSTGRES_PASSWORD:-ballot_local_dev}@db:5432/ballot
       CORS_ORIGINS: "*"
     volumes:
       - ballot-ocr-data:/data
@@ -32,3 +58,4 @@ services:
 
 volumes:
   ballot-ocr-data:
+  ballot-ocr-pgdata:

@@ -15,7 +15,7 @@ ssh_cmd() {
 }
 
 need() {
-  [[ -n "$CMD" ]] || { echo "usage: $0 deploy|health|teardown|status"; exit 1; }
+  [[ -n "$CMD" ]] || { echo "usage: $0 deploy|health|teardown|status|backup|restore <file>"; exit 1; }
   [[ -f "$PASSFILE" ]] || { echo "Missing $PASSFILE"; exit 1; }
   command -v sshpass >/dev/null || { echo "sshpass is required"; exit 1; }
 }
@@ -30,13 +30,13 @@ deploy() {
     --exclude 'node_modules' \
     --exclude 'frontend/dist' \
     --exclude '.local-secrets' \
-    --exclude 'ballot_ocr.db' \
-    --exclude 'ballot_ocr.db-*' \
     --exclude 'storage/raw/*' \
     --exclude 'storage/enhanced/*' \
     --exclude 'storage/thumbnails/*' \
     --exclude '.agents' \
     --exclude '.cursor' \
+    --exclude '.env' \
+    --exclude 'backups/' \
     "$ROOT/" "$HOST:$REMOTE_STACK/"
 
   ssh_cmd "sudo bash -s" <<'EOS'
@@ -50,7 +50,12 @@ fi
 sudo caddy validate --config "$CADDY"
 sudo systemctl reload caddy
 cd "$STACK"
-sudo docker compose -p ballot-ocr up -d --build
+if [[ ! -f .env ]]; then
+  umask 077
+  printf 'POSTGRES_PASSWORD=%s\n' "$(openssl rand -hex 24)" > .env
+  chmod 600 .env
+fi
+sudo docker compose --env-file .env -p ballot-ocr up -d --build
 EOS
   echo "Public desk: https://$PUBLIC_HOST"
   echo "JSON index:  https://$PUBLIC_HOST/api"
@@ -103,11 +108,51 @@ status() {
   ssh_cmd 'sudo docker ps --format "table {{.Names}}\t{{.Status}}\t{{.Ports}}"'
 }
 
+backup() {
+  stamp="$(date -u +%Y%m%dT%H%M%SZ)"
+  echo "Dumping PostgreSQL to $REMOTE_STACK/backups/ballot-$stamp.sql"
+  ssh_cmd "sudo bash -s" <<EOS
+set -euo pipefail
+STACK=$REMOTE_STACK
+mkdir -p "\$STACK/backups"
+sudo docker compose -p ballot-ocr -f "\$STACK/docker-compose.yml" exec -T db \\
+  pg_dump -U ballot -d ballot --no-owner --clean --if-exists --format=plain \\
+  | sudo tee "\$STACK/backups/ballot-$stamp.sql" >/dev/null
+sudo docker compose -p ballot-ocr -f "\$STACK/docker-compose.yml" exec -T db \\
+  pg_dump -U ballot -d ballot --format=custom \\
+  | sudo tee "\$STACK/backups/ballot-$stamp.dump" >/dev/null
+sudo chown -R ubuntu:ubuntu "\$STACK/backups"
+echo "Wrote \$STACK/backups/ballot-$stamp.sql"
+echo "Wrote \$STACK/backups/ballot-$stamp.dump"
+EOS
+}
+
+restore() {
+  dump="${2:-}"
+  [[ -n "$dump" ]] || { echo "usage: $0 restore ballot-YYYYMMDDTHHMMSSZ.sql"; exit 1; }
+  echo "Restoring $REMOTE_STACK/backups/$dump"
+  ssh_cmd "sudo bash -s" <<EOS
+set -euo pipefail
+STACK=$REMOTE_STACK
+FILE="\$STACK/backups/$dump"
+[[ -f "\$FILE" ]] || { echo "Missing \$FILE"; exit 1; }
+if [[ "\$FILE" == *.dump ]]; then
+  sudo docker compose -p ballot-ocr -f "\$STACK/docker-compose.yml" exec -T db \\
+    pg_restore --no-owner --role=ballot --clean --if-exists -d ballot < "\$FILE"
+else
+  sudo docker compose -p ballot-ocr -f "\$STACK/docker-compose.yml" exec -T db \\
+    psql -U ballot -d ballot -v ON_ERROR_STOP=1 < "\$FILE"
+fi
+EOS
+}
+
 need
 case "$CMD" in
   deploy) deploy ;;
   health) health ;;
   teardown) teardown ;;
   status) status ;;
-  *) echo "usage: $0 deploy|health|teardown|status"; exit 1 ;;
+  backup) backup ;;
+  restore) restore "$@" ;;
+  *) echo "usage: $0 deploy|health|teardown|status|backup|restore <file>"; exit 1 ;;
 esac

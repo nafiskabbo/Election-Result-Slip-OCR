@@ -28,3 +28,4 @@ frontend/dist/
 .vercel
 .local-secrets/
 .agents/skills/vps-komodo
+backups/

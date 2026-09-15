@@ -1,16 +1,8 @@
-import os
 import pytest
 from fastapi.testclient import TestClient
 from backend.main import app
-from backend.database import init_db
 
-@pytest.fixture(autouse=True)
-def setup_test_api_db(tmp_path, monkeypatch):
-    test_db = str(tmp_path / "test_api.db")
-    monkeypatch.setenv("BALLOT_DB_PATH", test_db)
-    import backend.database as db_module
-    db_module.DB_PATH = test_db
-    init_db()
+pytestmark = pytest.mark.usefixtures("postgres_db")
 
 @pytest.fixture
 def client():

@@ -21,7 +21,7 @@ A full-stack election result digitisation platform that automates the capture, e
 | **Backend**       | Python 3.10+, FastAPI, Uvicorn     |
 | **OCR**           | RapidOCR (ONNX Runtime)            |
 | **Image Processing** | OpenCV 5.0, Pillow              |
-| **Database**      | SQLite (WAL mode)                  |
+| **Database**      | PostgreSQL 16                      |
 | **PDF Export**     | ReportLab                         |
 | **Frontend**      | React 18 + Vite                     |
 | **Testing**       | Pytest + HTTPX                     |
@@ -32,7 +32,7 @@ A full-stack election result digitisation platform that automates the capture, e
 ballot/
 ├── backend/
 │   ├── main.py               # FastAPI application entry point
-│   ├── database.py            # SQLite schema, init, seed data
+│   ├── database.py            # Postgres pool, schema apply, init
 │   ├── models.py              # Pydantic request/response models
 │   ├── image_enhancer.py      # OpenCV enhancement pipeline
 │   ├── ocr_engine.py          # RapidOCR + barcode parser
@@ -51,6 +51,10 @@ ballot/
 ├── frontend/                  # React (Vite) operator desk
 │   ├── src/App.jsx
 │   └── src/components/
+├── schema/
+│   ├── ballot.sql             # Client schema (tables, keys, indexes)
+│   ├── seed.sql               # Demo users and default validation rules
+│   └── README.md              # Apply, backup, and restore
 ├── tests/
 │   ├── test_enhancement.py    # Image pipeline tests
 │   ├── test_ocr.py            # OCR extraction accuracy tests
@@ -76,6 +80,7 @@ ballot/
 - Python 3.10 or higher
 - pip
 - Node 24+ (to build the React UI)
+- Docker (PostgreSQL via `docker compose up -d db`)
 
 ### Installation
 
@@ -96,11 +101,12 @@ cd frontend && npm install && npm run build && cd ..
 ### Running the Application
 
 ```bash
-# Option 1: Use the startup script
+# Option 1: Use the startup script (starts Postgres, then the API)
 chmod +x run.sh
 ./run.sh
 
 # Option 2: API and Vite separately (this is how Render + Vercel run)
+docker compose up -d db
 source venv/bin/activate
 python -m uvicorn backend.main:app --host 0.0.0.0 --port 8000 --reload
 # in another terminal:
@@ -192,7 +198,7 @@ The Python API runs on Render. The React desk runs on Vercel and calls that API.
 3. After the first deploy, copy the service URL, e.g. `https://ballot-api.onrender.com`.
 4. Set `CORS_ORIGINS` to your Vercel origin (no trailing slash), or leave `*` while you are wiring things up.
 
-Optional persistent disk (paid plans): mount `/data` and set `DATA_DIR=/data`, `BALLOT_DB_PATH=/data/ballot_ocr.db`, `STORAGE_DIR=/data/storage`. Without a disk, SQLite and uploads reset on each deploy.
+Optional persistent disk (paid plans): mount `/data` and set `DATA_DIR=/data`, `STORAGE_DIR=/data/storage`, plus a Postgres `DATABASE_URL`. Uploaded images live on the disk; records live in Postgres.
 
 OCR needs more than Render’s free 512 MB. Use at least a **Starter** instance if uploads die with out-of-memory errors.
 

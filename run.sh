@@ -42,6 +42,24 @@ ensure_venv() {
   mkdir -p storage/raw storage/enhanced storage/thumbnails
 }
 
+ensure_postgres() {
+  if ! command -v docker >/dev/null 2>&1; then
+    echo "Docker is required to run PostgreSQL (docker compose up -d db)." >&2
+    exit 1
+  fi
+  echo "Starting PostgreSQL..."
+  docker compose up -d db
+  local i
+  for i in $(seq 1 40); do
+    if docker compose exec -T db pg_isready -U ballot -d ballot >/dev/null 2>&1; then
+      return 0
+    fi
+    sleep 0.5
+  done
+  echo "PostgreSQL did not become ready." >&2
+  exit 1
+}
+
 usage() {
   cat <<'EOF'
 Usage: ./run.sh [command]
@@ -74,12 +92,8 @@ run_tests() {
 
 start_server() {
   if command -v npm >/dev/null 2>&1; then
-    if [[ "${FORCE_FRONTEND_BUILD:-}" == "1" || ! -f frontend/dist/index.html ]]; then
-      echo "Building the React desk..."
-      (cd frontend && npm install && npm run build)
-    else
-      echo "Using existing frontend/dist (set FORCE_FRONTEND_BUILD=1 to rebuild)."
-    fi
+    echo "Building the React desk..."
+    (cd frontend && npm install && npm run build)
   else
     echo "npm not found; serving API only. For the split setup, run: cd frontend && npm run dev"
   fi
@@ -102,10 +116,12 @@ case "$cmd" in
   start)
     echo "Starting Result desk"
     ensure_venv
+    ensure_postgres
     start_server
     ;;
   test)
     ensure_venv
+    ensure_postgres
     run_tests "$@"
     ;;
   accuracy)

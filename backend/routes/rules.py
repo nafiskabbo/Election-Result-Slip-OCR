@@ -1,7 +1,7 @@
-import json
-from typing import List, Dict, Any
+from typing import List
+
 from fastapi import APIRouter, HTTPException
-from backend.database import get_db_connection
+from backend.database import as_jsonb, get_db_connection, parse_config_json
 from backend.models import ValidationRuleResponse, ValidationRuleUpdate
 from backend.validation_engine import ValidationEngine
 from backend.audit_service import AuditService
@@ -21,7 +21,7 @@ def get_all_rules():
     rules = []
     for r in rows:
         d = dict(r)
-        d["config_json"] = json.loads(d["config_json"]) if d["config_json"] else {}
+        d["config_json"] = parse_config_json(d.get("config_json"))
         d["is_active"] = bool(d["is_active"])
         rules.append(ValidationRuleResponse(**d))
     conn.close()
@@ -38,9 +38,12 @@ def update_rule(rule_code: str, update: ValidationRuleUpdate):
         conn.close()
         raise HTTPException(status_code=404, detail=f"Rule {rule_code} not found.")
 
-    new_active = int(update.is_active) if update.is_active is not None else rule["is_active"]
+    new_active = update.is_active if update.is_active is not None else bool(rule["is_active"])
     new_severity = update.severity if update.severity is not None else rule["severity"]
-    new_config = json.dumps(update.config_json) if update.config_json is not None else rule["config_json"]
+    new_config = (
+        update.config_json if update.config_json is not None
+        else parse_config_json(rule["config_json"])
+    )
 
     cursor.execute("""
         UPDATE validation_rules SET
@@ -48,7 +51,7 @@ def update_rule(rule_code: str, update: ValidationRuleUpdate):
             severity = ?,
             config_json = ?
         WHERE rule_code = ?
-    """, (new_active, new_severity, new_config, rule_code))
+    """, (new_active, new_severity, as_jsonb(new_config) or as_jsonb({}), rule_code))
     conn.commit()
     conn.close()
 

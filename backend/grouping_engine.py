@@ -1,9 +1,8 @@
-import sqlite3
-import json
 import uuid
 from datetime import datetime, timezone
-from typing import Dict, Any, List, Optional, Tuple
-from backend.database import get_db_connection
+from typing import Any, Dict, Optional, Tuple
+
+from backend.database import PooledConnection, as_jsonb, get_db_connection
 from backend.models import SlipStatusEnum
 
 class GroupingEngine:
@@ -105,7 +104,7 @@ class GroupingEngine:
                     extracted_data.get("total_votes_cast", 0),
                     extracted_data.get("special_votes", 0),
                     extracted_data.get("section_24a_votes", 0),
-                    1 if extracted_data.get("presiding_officer_signature_detected") else 0,
+                    bool(extracted_data.get("presiding_officer_signature_detected")),
                 ])
             if updates:
                 params.append(slip_id)
@@ -129,7 +128,7 @@ class GroupingEngine:
                 vd, extracted_data["station_name"], extracted_data["registered_voters"],
                 SlipStatusEnum.INCOMPLETE.value,
                 extracted_data.get("presiding_officer_name"),
-                1 if extracted_data.get("presiding_officer_signature_detected") else 0,
+                bool(extracted_data.get("presiding_officer_signature_detected")),
                 extracted_data.get("total_valid_votes", 0),
                 extracted_data.get("total_spoilt_votes", 0),
                 extracted_data.get("total_votes_cast", 0),
@@ -139,7 +138,6 @@ class GroupingEngine:
             ))
 
         # Insert the page record
-        flag_str = json.dumps(exception_flags) if exception_flags else None
         cursor.execute("""
             INSERT INTO slip_pages (
                 id, slip_id, page_number, page_total, barcode_text,
@@ -150,7 +148,7 @@ class GroupingEngine:
             page_id, slip_id, page_num, page_total, barcode_text,
             raw_file_path, enhanced_file_path, thumb_path,
             "exception" if exception_flags else "valid",
-            now, file_size, mime_type, flag_str
+            now, file_size, mime_type, as_jsonb(exception_flags)
         ))
 
         # Insert party results for this page
@@ -164,9 +162,9 @@ class GroupingEngine:
                 ) VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?)
             """, (
                 pr_id, slip_id, page_id, pr["row_index"], pr["party_name"], pr["party_code"],
-                pr["votes"], pr["confidence_score"], 0, None,
-                pr["original_ocr_votes"], 1 if pr["signature_detected"] else 0,
-                json.dumps(pr.get("bbox", {}))
+                pr["votes"], pr["confidence_score"], False, None,
+                pr["original_ocr_votes"], bool(pr["signature_detected"]),
+                as_jsonb(pr.get("bbox"))
             ))
 
         # Audit log for upload & extraction
@@ -190,7 +188,7 @@ class GroupingEngine:
         conn.close()
         return slip_id, page_id, summary
 
-    def consolidate_slip(self, slip_id: str, conn: Optional[sqlite3.Connection] = None) -> Dict[str, Any]:
+    def consolidate_slip(self, slip_id: str, conn: Optional[PooledConnection] = None) -> Dict[str, Any]:
         """
         Rule 2: Require Complete Set (keep Incomplete, block approval if pages missing)
         Rule 4: Consolidate once, aggregate rows and totals without double counting.

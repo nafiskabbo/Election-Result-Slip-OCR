@@ -40,7 +40,7 @@ def list_slips(
         query += " AND voting_district = ?"
         params.append(voting_district)
     if search:
-        query += " AND (slip_reference LIKE ? OR station_name LIKE ? OR municipality LIKE ? OR voting_district LIKE ?)"
+        query += " AND (slip_reference ILIKE ? OR station_name ILIKE ? OR municipality ILIKE ? OR voting_district ILIKE ?)"
         term = f"%{search}%"
         params.extend([term, term, term, term])
 
@@ -164,7 +164,7 @@ def update_party_votes(slip_id: str, update: PartyResultUpdate):
     cursor.execute("""
         UPDATE party_results SET
             votes = ?,
-            is_overridden = 1,
+            is_overridden = true,
             overridden_by = ?
         WHERE id = ?
     """, (new_votes, current_user, update.party_result_id))
@@ -218,7 +218,7 @@ def approve_slip(slip_id: str):
 
     cursor.execute("""
         SELECT COUNT(*) AS n FROM party_results
-        WHERE slip_id = ? AND is_overridden = 0
+        WHERE slip_id = ? AND NOT is_overridden
           AND (
             (votes > 0 AND confidence_score < ?)
             OR confidence_score < 0.4

@@ -8,11 +8,18 @@ load_dotenv()
 ROOT_DIR = Path(__file__).resolve().parent.parent
 
 DATA_DIR = Path(os.environ.get("DATA_DIR", str(ROOT_DIR)))
-DB_PATH = os.environ.get("BALLOT_DB_PATH", str(DATA_DIR / "ballot_ocr.db"))
+SCHEMA_DIR = Path(os.environ.get("SCHEMA_DIR", str(ROOT_DIR / "schema")))
 STORAGE_DIR = Path(os.environ.get("STORAGE_DIR", str(DATA_DIR / "storage")))
 SAMPLE_DIR = Path(os.environ.get("SAMPLE_DIR", str(ROOT_DIR / "sample_slips")))
 FRONTEND_DIST = ROOT_DIR / "frontend" / "dist"
 PORT = int(os.environ.get("PORT", "8000"))
+
+# Host-side default matches docker-compose (loopback 5433). In the API
+# container Compose sets DATABASE_URL to the `db` service.
+DATABASE_URL = os.environ.get(
+    "DATABASE_URL",
+    "postgresql://ballot:ballot_local_dev@127.0.0.1:5433/ballot",
+)
 
 # Comma-separated browser origins allowed to call the API (Vercel URL).
 # "*" lets any origin through so the first Render deploy works before CORS_ORIGINS is set.
@@ -48,7 +55,7 @@ SAMPLE_PACKS = [
 
 
 def ensure_dirs():
-    Path(DB_PATH).parent.mkdir(parents=True, exist_ok=True)
+    STORAGE_DIR.mkdir(parents=True, exist_ok=True)
     for sub in ("raw", "enhanced", "thumbnails"):
         (STORAGE_DIR / sub).mkdir(parents=True, exist_ok=True)
     SAMPLE_DIR.mkdir(parents=True, exist_ok=True)
