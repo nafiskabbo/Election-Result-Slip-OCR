@@ -1,7 +1,9 @@
+import { createPortal } from "react-dom";
+
 export default function Sheet({ title, open, onClose, children, footer }) {
   if (!open) return null;
 
-  return (
+  return createPortal(
     <div className="sheet-back" onClick={onClose} role="presentation">
       <div
         className="sheet"
@@ -20,6 +22,7 @@ export default function Sheet({ title, open, onClose, children, footer }) {
         <div className="sheet-body">{children}</div>
         {footer ? <div className="sheet-foot">{footer}</div> : null}
       </div>
-    </div>
+    </div>,
+    document.body,
   );
 }

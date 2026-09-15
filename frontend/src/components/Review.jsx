@@ -321,25 +321,18 @@ export default function Review({ slip, onReload, onInbox, notify }) {
 
       <div className={`workspace ${(active.ballot_type || "").toLowerCase()}`}>
         <div className={`review-photo-pane ${mobileTab === "photo" ? "mobile-show" : "mobile-hide"}`}>
-          <div className="pane-bar">
-            <div className="tools page-tabs">
-              {(active.pages || []).map((item, idx) => (
-                <button
-                  key={item.id}
-                  type="button"
-                  className={idx === pageIndex ? "btn" : "btn ghost"}
-                  onClick={() => setPageIndex(idx)}
-                >
-                  Page {item.page_number}/{item.page_total}
-                </button>
-              ))}
-            </div>
-          </div>
-          <Viewer src={fileUrl(page?.enhanced_file_path)} highlight={highlight} />
+          <Viewer
+            src={fileUrl(page?.enhanced_file_path)}
+            highlight={highlight}
+            pageNumber={page?.page_number || pageIndex + 1}
+            pageTotal={page?.page_total || active.pages?.length || 1}
+            onPrevPage={() => setPageIndex((i) => Math.max(0, i - 1))}
+            onNextPage={() => setPageIndex((i) => Math.min((active.pages?.length || 1) - 1, i + 1))}
+          />
         </div>
 
         <div className={`form-pane ${mobileTab === "counts" ? "mobile-show" : "mobile-hide"}`}>
-          <div className="pane-bar">
+          <div className="pane-bar counts-bar">
             <strong>Counts</strong>
             <div className="tools mobile-only">
               <button type="button" className="icon-btn" aria-label="Link page" title="Link page" onClick={linkPage}>

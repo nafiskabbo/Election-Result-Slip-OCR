@@ -204,7 +204,7 @@ export default function CameraCapture({ stream, disabled, pageCount = 0, onCaptu
 
       <div className="camera-toolbar">
         <button type="button" className="btn ghost camera-side" onClick={handleClose} disabled={disabled}>
-          Close camera
+          Close
         </button>
 
         <button
@@ -216,10 +216,12 @@ export default function CameraCapture({ stream, disabled, pageCount = 0, onCaptu
         />
 
         <div className="camera-side camera-side-right">
-          {onFallback && (
-            <button type="button" className="btn ghost" onClick={onFallback} disabled={disabled}>
-              Phone camera
+          {pageCount > 0 ? (
+            <button type="button" className="btn" onClick={handleClose} disabled={disabled}>
+              Done
             </button>
+          ) : (
+            <span className="camera-side-spacer" aria-hidden="true" />
           )}
         </div>
       </div>

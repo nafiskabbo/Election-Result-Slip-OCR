@@ -4,7 +4,14 @@ function touchDistance(a, b) {
   return Math.hypot(a.clientX - b.clientX, a.clientY - b.clientY);
 }
 
-export default function Viewer({ src, highlight }) {
+export default function Viewer({
+  src,
+  highlight,
+  pageNumber,
+  pageTotal,
+  onPrevPage,
+  onNextPage,
+}) {
   const wrapRef = useRef(null);
   const imgRef = useRef(null);
   const [scale, setScale] = useState(1);
@@ -16,11 +23,15 @@ export default function Viewer({ src, highlight }) {
   scaleRef.current = scale;
   panRef.current = pan;
 
+  const multiPage = (pageTotal || 0) > 1;
+  const canPrev = multiPage && pageNumber > 1;
+  const canNext = multiPage && pageNumber < pageTotal;
+
   const fit = () => {
     const wrap = wrapRef.current;
     const img = imgRef.current;
     if (!wrap || !img || !img.naturalWidth) return;
-    const pad = 24;
+    const pad = 16;
     const sx = (wrap.clientWidth - pad) / img.naturalWidth;
     const sy = (wrap.clientHeight - pad) / img.naturalHeight;
     setScale(Math.min(sx, sy, 1.4));
@@ -111,14 +122,41 @@ export default function Viewer({ src, highlight }) {
 
   return (
     <div className="viewer-pane">
-      <div className="pane-bar">
-        <strong>Photo</strong>
+      <div className="photo-toolbar">
+        <div className="page-switcher">
+          {multiPage ? (
+            <>
+              <button
+                type="button"
+                className="icon-btn"
+                aria-label="Previous page"
+                disabled={!canPrev}
+                onClick={onPrevPage}
+              >
+                ‹
+              </button>
+              <span className="page-switcher-label">
+                {pageNumber} / {pageTotal}
+              </span>
+              <button
+                type="button"
+                className="icon-btn"
+                aria-label="Next page"
+                disabled={!canNext}
+                onClick={onNextPage}
+              >
+                ›
+              </button>
+            </>
+          ) : (
+            <span className="page-switcher-label single">Page 1</span>
+          )}
+        </div>
         <div className="tools viewer-tools">
-          <button className="btn ghost" type="button" aria-label="Zoom in" onClick={() => setScale((s) => Math.min(4, s * 1.2))}>+</button>
-          <button className="btn ghost" type="button" aria-label="Zoom out" onClick={() => setScale((s) => Math.max(0.4, s * 0.8))}>−</button>
-          <button className="btn ghost" type="button" onClick={fit}>Fit</button>
-          <button className="btn ghost" type="button" aria-label="Rotate" onClick={() => setRotation((r) => r + 90)}>⟲</button>
-          <button className="btn ghost" type="button" onClick={() => { setRotation(0); fit(); }}>Reset</button>
+          <button className="icon-btn" type="button" aria-label="Zoom in" onClick={() => setScale((s) => Math.min(4, s * 1.2))}>+</button>
+          <button className="icon-btn" type="button" aria-label="Zoom out" onClick={() => setScale((s) => Math.max(0.4, s * 0.8))}>−</button>
+          <button className="icon-btn" type="button" aria-label="Fit" onClick={fit}>Fit</button>
+          <button className="icon-btn" type="button" aria-label="Rotate" onClick={() => setRotation((r) => r + 90)}>⟲</button>
         </div>
       </div>
       <div
