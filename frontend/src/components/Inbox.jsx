@@ -1,5 +1,6 @@
 import { useState } from "react";
 import { api, apiUrl, statusLabel } from "../api.js";
+import InfoTip from "./InfoTip.jsx";
 
 export default function Inbox({ slips, counts, onRefresh, onOpen, onCapture, notify }) {
   const [search, setSearch] = useState("");
@@ -18,21 +19,23 @@ export default function Inbox({ slips, counts, onRefresh, onOpen, onCapture, not
   return (
     <section>
       <header className="page-head">
-        <div>
+        <div className="page-title-row">
           <h1>Inbox</h1>
-          <p>Slips waiting to be checked. Incomplete sets stay here until the missing pages arrive.</p>
+          <InfoTip label="Inbox help">
+            <p>Slips waiting to be checked. Incomplete sets stay here until missing pages arrive.</p>
+          </InfoTip>
         </div>
-        <div className="toolbar" style={{ margin: 0 }}>
-          <button className="btn ghost" onClick={clear}>Clear inbox</button>
-          <button className="btn" onClick={onCapture}>Capture slips</button>
+        <div className="toolbar page-actions">
+          <button type="button" className="btn ghost" onClick={clear}>Clear</button>
+          <button type="button" className="btn" onClick={onCapture}>Capture</button>
         </div>
       </header>
 
       <div className="counts">
-        <div className="count"><b>{counts.total}</b><span>Captured</span></div>
+        <div className="count"><b>{counts.total}</b><span>Total</span></div>
         <div className="count pass"><b>{counts.approved}</b><span>Approved</span></div>
-        <div className="count warn"><b>{counts.pending}</b><span>Ready to check</span></div>
-        <div className="count fail"><b>{counts.incomplete}</b><span>Missing pages</span></div>
+        <div className="count warn"><b>{counts.pending}</b><span>Ready</span></div>
+        <div className="count fail"><b>{counts.incomplete}</b><span>Missing</span></div>
         <div className="count"><b>{counts.flagged}</b><span>Flagged</span></div>
       </div>
 
@@ -40,7 +43,8 @@ export default function Inbox({ slips, counts, onRefresh, onOpen, onCapture, not
         <input
           className="search"
           value={search}
-          placeholder="Search VD, station, or reference"
+          placeholder="Search VD, station…"
+          enterKeyHint="search"
           onChange={(e) => setSearch(e.target.value)}
           onKeyDown={(e) => e.key === "Enter" && apply()}
         />
@@ -52,24 +56,24 @@ export default function Inbox({ slips, counts, onRefresh, onOpen, onCapture, not
         </select>
         <select value={status} onChange={(e) => setStatus(e.target.value)}>
           <option value="">All statuses</option>
-          <option value="pending_review">Ready to check</option>
-          <option value="incomplete">Missing pages</option>
+          <option value="pending_review">Ready</option>
+          <option value="incomplete">Missing</option>
           <option value="approved">Approved</option>
           <option value="flagged">Flagged</option>
           <option value="rejected">Rejected</option>
         </select>
-        <button className="btn ghost" onClick={apply}>Filter</button>
-        <a className="btn ghost" href={apiUrl("/api/export/csv")}>Export CSV</a>
+        <button type="button" className="btn ghost" onClick={apply}>Filter</button>
+        <a className="btn ghost" href={apiUrl("/api/export/csv")}>CSV</a>
       </div>
 
-      <div className="table-wrap">
+      <div className="table-wrap desktop-only">
         <table className="data">
           <thead>
             <tr>
               <th>Reference</th>
               <th>Ballot</th>
               <th>Station</th>
-              <th className="num">Valid votes</th>
+              <th className="num">Valid</th>
               <th>Pages</th>
               <th>Status</th>
               <th></th>
@@ -78,9 +82,7 @@ export default function Inbox({ slips, counts, onRefresh, onOpen, onCapture, not
           <tbody>
             {slips.length === 0 && (
               <tr>
-                <td colSpan="7" className="empty">
-                  Nothing captured yet. Photograph a slip or load a sample pack from Capture.
-                </td>
+                <td colSpan="7" className="empty">Nothing captured yet.</td>
               </tr>
             )}
             {slips.map((slip) => {
@@ -100,11 +102,11 @@ export default function Inbox({ slips, counts, onRefresh, onOpen, onCapture, not
                   </td>
                   <td className="num">
                     {slip.total_valid_votes}
-                    <div className="sub">{slip.registered_voters} registered</div>
+                    <div className="sub">{slip.registered_voters} reg.</div>
                   </td>
                   <td>
                     <span className={`chip ${complete ? "approved" : "incomplete"}`}>
-                      {slip.total_received_pages} of {slip.total_expected_pages}
+                      {slip.total_received_pages}/{slip.total_expected_pages}
                     </span>
                   </td>
                   <td>
@@ -113,7 +115,7 @@ export default function Inbox({ slips, counts, onRefresh, onOpen, onCapture, not
                   </td>
                   <td>
                     <div className="row-actions">
-                      <button className="btn ghost" onClick={() => onOpen(slip.id)}>Open</button>
+                      <button type="button" className="btn ghost" onClick={() => onOpen(slip.id)}>Open</button>
                     </div>
                   </td>
                 </tr>
@@ -121,6 +123,34 @@ export default function Inbox({ slips, counts, onRefresh, onOpen, onCapture, not
             })}
           </tbody>
         </table>
+      </div>
+
+      <div className="slip-cards mobile-only">
+        {slips.length === 0 && <div className="empty">Nothing captured yet.</div>}
+        {slips.map((slip) => {
+          const complete = slip.total_received_pages >= slip.total_expected_pages;
+          return (
+            <button
+              type="button"
+              key={slip.id}
+              className={`slip-card ${(slip.ballot_type || "").toLowerCase()}`}
+              onClick={() => onOpen(slip.id)}
+            >
+              <div className="slip-card-top">
+                <strong>{slip.slip_reference}</strong>
+                <span className={`chip ${slip.status}`}>{statusLabel(slip.status)}</span>
+              </div>
+              <div className="slip-card-meta">
+                <span className={`chip ${(slip.ballot_type || "").toLowerCase()}`}>{slip.ballot_type}</span>
+                <span className={`chip ${complete ? "approved" : "incomplete"}`}>
+                  {slip.total_received_pages}/{slip.total_expected_pages}
+                </span>
+              </div>
+              <div className="slip-card-station">{slip.station_name || "Station unread"}</div>
+              <div className="sub">VD {slip.voting_district} · {slip.total_valid_votes} valid</div>
+            </button>
+          );
+        })}
       </div>
     </section>
   );

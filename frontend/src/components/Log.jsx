@@ -1,5 +1,6 @@
 import { useEffect, useState } from "react";
 import { api } from "../api.js";
+import InfoTip from "./InfoTip.jsx";
 
 export default function Log() {
   const [logs, setLogs] = useState([]);
@@ -11,9 +12,11 @@ export default function Log() {
   return (
     <section>
       <header className="page-head">
-        <div>
+        <div className="page-title-row">
           <h1>Log</h1>
-          <p>Every capture, edit, link, and approval is appended here. Old rows are not rewritten.</p>
+          <InfoTip label="Log help">
+            <p>Every capture, edit, link, and approval is appended here. Old rows are not rewritten.</p>
+          </InfoTip>
         </div>
       </header>
       <div className="audit-list">

@@ -2,6 +2,7 @@ import { useEffect, useMemo, useState } from "react";
 import { api, apiUrl, fileUrl, statusLabel } from "../api.js";
 import Viewer from "./Viewer.jsx";
 import Prompt from "./Prompt.jsx";
+import InfoTip from "./InfoTip.jsx";
 
 export default function Review({ slip, onReload, onInbox, notify }) {
   const [pageIndex, setPageIndex] = useState(0);
@@ -29,11 +30,14 @@ export default function Review({ slip, onReload, onInbox, notify }) {
     return (
       <section>
         <header className="page-head">
-          <div>
+          <div className="page-title-row">
             <h1>Review</h1>
-            <p>Open a slip from the inbox to check it against the photograph.</p>
+            <InfoTip label="Review help">
+              <p>Open a slip from the inbox to check extracted values against the photograph.</p>
+            </InfoTip>
           </div>
         </header>
+        <div className="empty">Select a slip from Inbox.</div>
       </section>
     );
   }
@@ -86,26 +90,30 @@ export default function Review({ slip, onReload, onInbox, notify }) {
   };
 
   return (
-    <section>
+    <section className="review-section">
       <header className="page-head">
-        <div>
+        <div className="page-title-row">
           <h1>Review</h1>
-          <p>Read the photograph, correct anything the OCR missed, then approve only when the set is complete.</p>
+          <InfoTip label="Review help">
+            <p>Correct OCR mistakes, confirm pages are complete, then approve.</p>
+            <p>Approval stays blocked while pages are missing or critical checks fail.</p>
+          </InfoTip>
         </div>
-        <button className="btn ghost" onClick={onInbox}>Back to inbox</button>
+        <button type="button" className="btn ghost" onClick={onInbox}>Inbox</button>
       </header>
 
       <div className={`workspace ${(active.ballot_type || "").toLowerCase()}`}>
         <div>
           <div className="pane-bar">
-            <div className="tools">
+            <div className="tools page-tabs">
               {(active.pages || []).map((item, idx) => (
                 <button
                   key={item.id}
+                  type="button"
                   className={idx === pageIndex ? "btn" : "btn ghost"}
                   onClick={() => setPageIndex(idx)}
                 >
-                  Page {item.page_number} of {item.page_total}
+                  {item.page_number}/{item.page_total}
                 </button>
               ))}
             </div>
@@ -115,21 +123,21 @@ export default function Review({ slip, onReload, onInbox, notify }) {
 
         <div className="form-pane">
           <div className="pane-bar">
-            <strong>Extracted counts</strong>
+            <strong>Counts</strong>
             <div className="tools">
-              <button className="btn ghost" onClick={() => runPrompt({
+              <button type="button" className="btn ghost" onClick={() => runPrompt({
                 title: "Link this page",
-                body: "Paste the target slip id and a reason of at least 5 characters.",
+                body: "Paste the target slip id and a reason.",
                 fields: ["target", "reason"],
                 onSubmit: async ({ target, reason }) => {
                   await api.linkPage(page.id, target, reason);
                   notify("Page linked", "pass");
                   await onReload(target);
                 },
-              })}>Link page</button>
-              <button className="btn ghost" onClick={() => runPrompt({
+              })}>Link</button>
+              <button type="button" className="btn ghost" onClick={() => runPrompt({
                 title: "Unlink this page",
-                body: "Give a reason of at least 5 characters. The page becomes its own slip.",
+                body: "Give a reason. The page becomes its own slip.",
                 fields: ["reason"],
                 onSubmit: async ({ reason }) => {
                   await api.unlinkPage(page.id, reason);
@@ -160,38 +168,33 @@ export default function Review({ slip, onReload, onInbox, notify }) {
 
             {complete ? (
               <div className="banner good">
-                <div>
-                  <b>All expected pages are here</b>
-                  {active.total_expected_pages} of {active.total_expected_pages} linked.
-                </div>
+                <b>Complete · {active.total_expected_pages}/{active.total_expected_pages}</b>
               </div>
             ) : (
               <div className="banner bad">
-                <div>
-                  <b>Missing page {missing.join(", ")}</b>
-                  {active.total_received_pages} of {active.total_expected_pages} received. Approval stays blocked until the rest arrive.
-                </div>
+                <b>Missing page {missing.join(", ")}</b>
+                <span className="sub">{active.total_received_pages}/{active.total_expected_pages}</span>
               </div>
             )}
 
-            <div className="table-wrap" style={{ maxHeight: 280 }}>
+            <div className="table-wrap votes-wrap">
               <table className="data votes">
                 <thead>
                   <tr>
                     <th>Party</th>
                     <th className="num">Votes</th>
-                    <th className="num">Conf.</th>
-                    <th>Agent</th>
+                    <th className="num">%</th>
+                    <th>Sig</th>
                   </tr>
                 </thead>
                 <tbody>
                   {(active.party_results || []).map((row) => (
                     <tr
                       key={row.id}
-                      onMouseEnter={() => {
+                      onPointerEnter={() => {
                         try { setHighlight(JSON.parse(row.bbox_json || "{}")); } catch { setHighlight(null); }
                       }}
-                      onMouseLeave={() => setHighlight(null)}
+                      onPointerLeave={() => setHighlight(null)}
                     >
                       <td>
                         {row.party_name}
@@ -200,14 +203,15 @@ export default function Review({ slip, onReload, onInbox, notify }) {
                       <td className="num">
                         <input
                           type="number"
+                          inputMode="numeric"
                           defaultValue={row.votes}
                           onBlur={(e) => {
                             if (String(e.target.value) !== String(row.votes)) changeVotes(row, e.target.value);
                           }}
                         />
                       </td>
-                      <td className="num conf">{Math.round((row.confidence_score || 0) * 100)}%</td>
-                      <td>{row.signature_detected ? "Signed" : "—"}</td>
+                      <td className="num conf">{Math.round((row.confidence_score || 0) * 100)}</td>
+                      <td>{row.signature_detected ? "✓" : "—"}</td>
                     </tr>
                   ))}
                 </tbody>
@@ -220,16 +224,16 @@ export default function Review({ slip, onReload, onInbox, notify }) {
                 <strong>{partySum}</strong>
               </div>
               <div className="recon-row">
-                <span>Valid votes</span>
-                <input type="number" defaultValue={active.total_valid_votes} onBlur={(e) => changeField("total_valid_votes", parseInt(e.target.value, 10) || 0)} />
+                <span>Valid</span>
+                <input type="number" inputMode="numeric" defaultValue={active.total_valid_votes} onBlur={(e) => changeField("total_valid_votes", parseInt(e.target.value, 10) || 0)} />
               </div>
               <div className="recon-row">
                 <span>Spoilt</span>
-                <input type="number" defaultValue={active.total_spoilt_votes} onBlur={(e) => changeField("total_spoilt_votes", parseInt(e.target.value, 10) || 0)} />
+                <input type="number" inputMode="numeric" defaultValue={active.total_spoilt_votes} onBlur={(e) => changeField("total_spoilt_votes", parseInt(e.target.value, 10) || 0)} />
               </div>
               <div className="recon-row">
-                <span>Votes cast</span>
-                <input type="number" defaultValue={active.total_votes_cast} onBlur={(e) => changeField("total_votes_cast", parseInt(e.target.value, 10) || 0)} />
+                <span>Cast</span>
+                <input type="number" inputMode="numeric" defaultValue={active.total_votes_cast} onBlur={(e) => changeField("total_votes_cast", parseInt(e.target.value, 10) || 0)} />
               </div>
               <div className="recon-row">
                 <span>Turnout</span>
@@ -248,7 +252,7 @@ export default function Review({ slip, onReload, onInbox, notify }) {
 
             <div className="decision">
               <div className="tools">
-                <button className="btn danger" onClick={() => runPrompt({
+                <button type="button" className="btn danger" onClick={() => runPrompt({
                   title: "Reject this slip",
                   body: "A reason of at least 5 characters is required.",
                   fields: ["reason"],
@@ -258,7 +262,7 @@ export default function Review({ slip, onReload, onInbox, notify }) {
                     await refresh();
                   },
                 })}>Reject</button>
-                <button className="btn warn" onClick={() => runPrompt({
+                <button type="button" className="btn warn" onClick={() => runPrompt({
                   title: "Flag for a supervisor",
                   body: "Say what needs a second look.",
                   fields: ["reason"],
@@ -270,6 +274,7 @@ export default function Review({ slip, onReload, onInbox, notify }) {
                 })}>Flag</button>
               </div>
               <button
+                type="button"
                 className="btn pass"
                 disabled={!complete || active.has_errors}
                 title={!complete ? "Missing pages" : active.has_errors ? "Fix failed checks first" : "Approve"}

@@ -1,10 +1,19 @@
 import { useCallback, useEffect, useRef, useState } from "react";
+import InfoTip from "./InfoTip.jsx";
 
 export async function openRearCamera() {
   if (!navigator.mediaDevices?.getUserMedia) {
     throw new Error("Camera API is not available in this browser.");
   }
   const attempts = [
+    {
+      video: {
+        facingMode: { ideal: "environment" },
+        width: { ideal: 1920 },
+        height: { ideal: 1080 },
+      },
+      audio: false,
+    },
     { video: { facingMode: { ideal: "environment" } }, audio: false },
     { video: { facingMode: "environment" }, audio: false },
     { video: true, audio: false },
@@ -53,10 +62,11 @@ function canvasToJpegFile(canvas) {
   });
 }
 
-export default function CameraCapture({ stream, disabled, onCapture, onClose, onFallback }) {
+export default function CameraCapture({ stream, disabled, pageCount = 0, onCapture, onClose, onFallback }) {
   const videoRef = useRef(null);
   const [ready, setReady] = useState(false);
   const [error, setError] = useState("");
+  const [flash, setFlash] = useState(false);
   const capturingRef = useRef(false);
 
   const stopTracks = useCallback(() => {
@@ -120,7 +130,10 @@ export default function CameraCapture({ stream, disabled, onCapture, onClose, on
   const handleManualCapture = async () => {
     try {
       const file = await snap();
-      if (file) onCapture(file);
+      if (!file) return;
+      setFlash(true);
+      window.setTimeout(() => setFlash(false), 160);
+      onCapture(file);
     } catch (err) {
       setError(err.message || "Capture failed.");
     }
@@ -131,9 +144,8 @@ export default function CameraCapture({ stream, disabled, onCapture, onClose, on
     onClose();
   };
 
-  let hint = "Fit the slip inside the four corners, then capture.";
-  if (!ready && !error) hint = "Starting camera…";
-  if (error) hint = error;
+  let status = ready ? "Ready" : "Starting…";
+  if (error) status = error;
 
   return (
     <div className="camera-shell">
@@ -145,31 +157,43 @@ export default function CameraCapture({ stream, disabled, onCapture, onClose, on
           muted
           playsInline
         />
-        <div className="camera-overlay" aria-hidden="true">
+        <div className={`camera-overlay ${flash ? "flash" : ""}`} aria-hidden="true">
           <div className="camera-frame">
             <span className="camera-corner camera-corner-tl" />
             <span className="camera-corner camera-corner-tr" />
             <span className="camera-corner camera-corner-bl" />
             <span className="camera-corner camera-corner-br" />
           </div>
-          <p className="camera-hint">{hint}</p>
+        </div>
+        <div className="camera-status">
+          <span className={error ? "fail" : ""}>{status}</span>
+          {pageCount > 0 && <span className="camera-count">{pageCount} captured</span>}
         </div>
       </div>
 
       <div className="camera-toolbar">
-        <p className="camera-guide">Keep all four edges of the paper inside the brackets.</p>
-        <div className="camera-actions">
-          <button type="button" className="btn ghost" onClick={handleClose} disabled={disabled}>
-            Close
-          </button>
+        <button type="button" className="btn ghost camera-side" onClick={handleClose} disabled={disabled}>
+          Close
+        </button>
+
+        <button
+          type="button"
+          className="camera-shutter"
+          aria-label="Capture page"
+          onClick={handleManualCapture}
+          disabled={!ready || disabled}
+        />
+
+        <div className="camera-side camera-side-right">
+          <InfoTip label="Camera tips" align="end">
+            <p>Fit all four edges of the slip inside the brackets.</p>
+            <p>Hold steady, avoid glare, and capture each page before uploading.</p>
+          </InfoTip>
           {onFallback && (
             <button type="button" className="btn ghost" onClick={onFallback} disabled={disabled}>
-              Phone camera app
+              App
             </button>
           )}
-          <button type="button" className="btn" onClick={handleManualCapture} disabled={!ready || disabled}>
-            Capture page
-          </button>
         </div>
       </div>
     </div>

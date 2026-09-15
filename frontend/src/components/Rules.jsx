@@ -1,5 +1,6 @@
 import { useEffect, useState } from "react";
 import { api } from "../api.js";
+import InfoTip from "./InfoTip.jsx";
 
 export default function Rules({ notify }) {
   const [rules, setRules] = useState([]);
@@ -17,9 +18,11 @@ export default function Rules({ notify }) {
   return (
     <section>
       <header className="page-head">
-        <div>
+        <div className="page-title-row">
           <h1>Rules</h1>
-          <p>Critical failures block approval. Warnings stay visible but do not stop a supervisor.</p>
+          <InfoTip label="Rules help">
+            <p>Critical failures block approval. Warnings stay visible but do not stop a supervisor.</p>
+          </InfoTip>
         </div>
       </header>
       <div className="rule-list">
@@ -29,24 +32,24 @@ export default function Rules({ notify }) {
               <div>
                 <strong>{rule.name}</strong> <code>{rule.rule_code}</code>
               </div>
-              <label>
+              <label className="inline-check">
                 <input
                   type="checkbox"
                   checked={rule.is_active}
                   onChange={(e) => patch(rule.rule_code, { is_active: e.target.checked })}
-                />{" "}
+                />
                 Active
               </label>
             </div>
             <p>{rule.description}</p>
-            <label>
-              Severity{" "}
+            <label className="severity-label">
+              Severity
               <select
                 value={rule.severity}
                 onChange={(e) => patch(rule.rule_code, { severity: e.target.value })}
               >
-                <option value="error">Critical, blocks approval</option>
-                <option value="warning">Warning only</option>
+                <option value="error">Critical</option>
+                <option value="warning">Warning</option>
               </select>
             </label>
           </article>

@@ -1,12 +1,20 @@
 import { useEffect, useRef, useState } from "react";
 
+function touchDistance(a, b) {
+  return Math.hypot(a.clientX - b.clientX, a.clientY - b.clientY);
+}
+
 export default function Viewer({ src, highlight }) {
   const wrapRef = useRef(null);
   const imgRef = useRef(null);
   const [scale, setScale] = useState(1);
   const [pan, setPan] = useState({ x: 0, y: 0 });
   const [rotation, setRotation] = useState(0);
-  const drag = useRef(null);
+  const scaleRef = useRef(scale);
+  const panRef = useRef(pan);
+  const gesture = useRef(null);
+  scaleRef.current = scale;
+  panRef.current = pan;
 
   const fit = () => {
     const wrap = wrapRef.current;
@@ -25,22 +33,67 @@ export default function Viewer({ src, highlight }) {
   }, [src]);
 
   useEffect(() => {
-    const img = imgRef.current;
-    if (!img) return;
-    const onLoad = () => fit();
-    img.addEventListener("load", onLoad);
-    return () => img.removeEventListener("load", onLoad);
+    const wrap = wrapRef.current;
+    if (!wrap) return undefined;
+
+    const onTouchStart = (e) => {
+      if (e.touches.length === 2) {
+        gesture.current = {
+          mode: "pinch",
+          dist: touchDistance(e.touches[0], e.touches[1]),
+          scale: scaleRef.current,
+        };
+      } else if (e.touches.length === 1) {
+        gesture.current = {
+          mode: "pan",
+          x: e.touches[0].clientX - panRef.current.x,
+          y: e.touches[0].clientY - panRef.current.y,
+        };
+      }
+    };
+
+    const onTouchMove = (e) => {
+      if (!gesture.current) return;
+      if (gesture.current.mode === "pinch" && e.touches.length === 2) {
+        e.preventDefault();
+        const ratio = touchDistance(e.touches[0], e.touches[1]) / gesture.current.dist;
+        setScale(Math.min(4, Math.max(0.4, gesture.current.scale * ratio)));
+      } else if (gesture.current.mode === "pan" && e.touches.length === 1) {
+        setPan({
+          x: e.touches[0].clientX - gesture.current.x,
+          y: e.touches[0].clientY - gesture.current.y,
+        });
+      }
+    };
+
+    const onTouchEnd = () => {
+      gesture.current = null;
+    };
+
+    wrap.addEventListener("touchstart", onTouchStart, { passive: true });
+    wrap.addEventListener("touchmove", onTouchMove, { passive: false });
+    wrap.addEventListener("touchend", onTouchEnd);
+    wrap.addEventListener("touchcancel", onTouchEnd);
+    return () => {
+      wrap.removeEventListener("touchstart", onTouchStart);
+      wrap.removeEventListener("touchmove", onTouchMove);
+      wrap.removeEventListener("touchend", onTouchEnd);
+      wrap.removeEventListener("touchcancel", onTouchEnd);
+    };
   }, []);
 
   const onPointerDown = (e) => {
-    drag.current = { x: e.clientX - pan.x, y: e.clientY - pan.y };
-    wrapRef.current.setPointerCapture(e.pointerId);
+    if (e.pointerType === "touch") return;
+    gesture.current = { mode: "pan", x: e.clientX - pan.x, y: e.clientY - pan.y };
+    wrapRef.current?.setPointerCapture(e.pointerId);
   };
   const onPointerMove = (e) => {
-    if (!drag.current) return;
-    setPan({ x: e.clientX - drag.current.x, y: e.clientY - drag.current.y });
+    if (e.pointerType === "touch" || !gesture.current || gesture.current.mode !== "pan") return;
+    setPan({ x: e.clientX - gesture.current.x, y: e.clientY - gesture.current.y });
   };
-  const onPointerUp = () => { drag.current = null; };
+  const onPointerUp = () => {
+    if (gesture.current?.mode === "pan") gesture.current = null;
+  };
 
   const onWheel = (e) => {
     e.preventDefault();
@@ -59,12 +112,12 @@ export default function Viewer({ src, highlight }) {
   return (
     <div className="viewer-pane">
       <div className="pane-bar">
-        <strong>Slip photograph</strong>
-        <div className="tools">
-          <button className="btn ghost" type="button" onClick={() => setScale((s) => Math.min(4, s * 1.2))}>Zoom in</button>
-          <button className="btn ghost" type="button" onClick={() => setScale((s) => Math.max(0.4, s * 0.8))}>Zoom out</button>
+        <strong>Photo</strong>
+        <div className="tools viewer-tools">
+          <button className="btn ghost" type="button" aria-label="Zoom in" onClick={() => setScale((s) => Math.min(4, s * 1.2))}>+</button>
+          <button className="btn ghost" type="button" aria-label="Zoom out" onClick={() => setScale((s) => Math.max(0.4, s * 0.8))}>−</button>
           <button className="btn ghost" type="button" onClick={fit}>Fit</button>
-          <button className="btn ghost" type="button" onClick={() => setRotation((r) => r + 90)}>Rotate</button>
+          <button className="btn ghost" type="button" aria-label="Rotate" onClick={() => setRotation((r) => r + 90)}>⟲</button>
           <button className="btn ghost" type="button" onClick={() => { setRotation(0); fit(); }}>Reset</button>
         </div>
       </div>
@@ -74,6 +127,7 @@ export default function Viewer({ src, highlight }) {
         onPointerDown={onPointerDown}
         onPointerMove={onPointerMove}
         onPointerUp={onPointerUp}
+        onPointerCancel={onPointerUp}
         onWheel={onWheel}
       >
         {src ? (
@@ -82,6 +136,7 @@ export default function Viewer({ src, highlight }) {
             src={src}
             alt="Result slip"
             onLoad={fit}
+            draggable={false}
             style={{ transform: `translate(-50%, -50%) translate(${pan.x}px, ${pan.y}px) scale(${scale}) rotate(${rotation}deg)` }}
           />
         ) : (

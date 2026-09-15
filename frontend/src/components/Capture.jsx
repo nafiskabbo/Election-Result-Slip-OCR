@@ -1,8 +1,9 @@
 import { useEffect, useRef, useState } from "react";
 import { api } from "../api.js";
 import CameraCapture, { openRearCamera } from "./CameraCapture.jsx";
+import InfoTip from "./InfoTip.jsx";
 
-export default function Capture({ busy, setBusy, onDone, notify }) {
+export default function Capture({ busy, setBusy, onDone, notify, onCameraActiveChange }) {
   const [packs, setPacks] = useState([]);
   const [over, setOver] = useState(false);
   const [note, setNote] = useState("");
@@ -26,6 +27,11 @@ export default function Capture({ busy, setBusy, onDone, notify }) {
     pendingRef.current.forEach((item) => URL.revokeObjectURL(item.preview));
     streamRef.current?.getTracks().forEach((track) => track.stop());
   }, []);
+
+  useEffect(() => {
+    onCameraActiveChange?.(cameraOpen && !!liveStream);
+    return () => onCameraActiveChange?.(false);
+  }, [cameraOpen, liveStream, onCameraActiveChange]);
 
   const runFiles = async (fileList) => {
     const files = Array.from(fileList || []);
@@ -57,7 +63,7 @@ export default function Capture({ busy, setBusy, onDone, notify }) {
   const addCameraPage = (file) => {
     const preview = URL.createObjectURL(file);
     setPending((prev) => [...prev, { id: `${Date.now()}-${prev.length}`, file, preview }]);
-    notify("Page captured — add more or upload when the set is ready.", "info");
+    notify("Page captured", "info");
   };
 
   const removePending = (id) => {
@@ -88,14 +94,14 @@ export default function Capture({ busy, setBusy, onDone, notify }) {
       setLiveStream(stream);
       setCameraOpen(true);
     } catch (err) {
-      notify(err.message || "Live camera is blocked. Using the phone camera app instead.", "warn");
+      notify(err.message || "Live camera blocked — opening phone camera.", "warn");
       openNativeCamera();
     }
   };
 
   const runPack = async (packId) => {
     setBusy(true);
-    setNote("Running the sample pack through enhancement and OCR…");
+    setNote("Running sample pack…");
     try {
       const data = await api.loadPack(packId);
       notify(`${data.processed_pages_count} pages became ${data.affected_slips.length} slip${data.affected_slips.length === 1 ? "" : "s"}`, "pass");
@@ -109,21 +115,24 @@ export default function Capture({ busy, setBusy, onDone, notify }) {
   };
 
   return (
-    <section>
-      <header className="page-head">
-        <div>
-          <h1>Capture</h1>
-          <p>
-            Photograph each page so all four slip edges sit inside the frame, or drop files from a scanner or gallery.
-            The desk still crops and deskews on the server, but a straight, well-lit shot reads better.
-          </p>
-        </div>
-      </header>
+    <section className={cameraOpen && liveStream ? "capture-camera" : ""}>
+      {!(cameraOpen && liveStream) && (
+        <header className="page-head">
+          <div className="page-title-row">
+            <h1>Capture</h1>
+            <InfoTip label="Capture help">
+              <p>Photograph each page so all four slip edges are visible, or upload scanner/gallery files.</p>
+              <p>JPEG, PNG, and PDF are accepted. Multi-page slips can be captured one page at a time, then uploaded together.</p>
+            </InfoTip>
+          </div>
+        </header>
+      )}
 
       {cameraOpen && liveStream ? (
         <CameraCapture
           stream={liveStream}
           disabled={busy}
+          pageCount={pending.length}
           onCapture={addCameraPage}
           onClose={closeCamera}
           onFallback={() => {
@@ -142,14 +151,13 @@ export default function Capture({ busy, setBusy, onDone, notify }) {
             runFiles(e.dataTransfer.files);
           }}
         >
-          <h2>Drop slips on the tray</h2>
-          <p>JPEG, PNG, or PDF. Mixed batches are fine. Each page is enhanced before the numbers are read.</p>
+          <h2>Add slips</h2>
           <div className="drop-actions">
-            <button className="btn" type="button" onClick={() => galleryInputRef.current?.click()}>
-              Choose files
-            </button>
-            <button className="btn ghost" type="button" onClick={openLiveCamera}>
+            <button className="btn" type="button" onClick={openLiveCamera}>
               Use camera
+            </button>
+            <button className="btn ghost" type="button" onClick={() => galleryInputRef.current?.click()}>
+              Choose files
             </button>
           </div>
           <input
@@ -178,12 +186,12 @@ export default function Capture({ busy, setBusy, onDone, notify }) {
         </div>
       )}
 
-      {pending.length > 0 && (
+      {pending.length > 0 && !(cameraOpen && liveStream) && (
         <div className="capture-queue">
           <div className="capture-queue-head">
-            <h2>{pending.length} page{pending.length === 1 ? "" : "s"} ready to upload</h2>
+            <h2>{pending.length} page{pending.length === 1 ? "" : "s"}</h2>
             <button className="btn" type="button" disabled={busy} onClick={uploadPending}>
-              Upload {pending.length} page{pending.length === 1 ? "" : "s"}
+              Upload
             </button>
           </div>
           <ul className="capture-thumbs">
@@ -201,19 +209,20 @@ export default function Capture({ busy, setBusy, onDone, notify }) {
 
       {busy && <div className="progress">{note || "Working…"}</div>}
 
-      <div className="packs">
-        {packs.map((pack) => (
-          <article className="pack" key={pack.id}>
-            <div>
-              <h3>{pack.title}</h3>
-              <p>{pack.blurb}</p>
-            </div>
-            <button className="btn" disabled={busy || !pack.available} onClick={() => runPack(pack.id)}>
-              Load {pack.files.length} photos
-            </button>
-          </article>
-        ))}
-      </div>
+      {!(cameraOpen && liveStream) && packs.length > 0 && (
+        <div className="packs">
+          {packs.map((pack) => (
+            <article className="pack" key={pack.id}>
+              <div>
+                <h3>{pack.title}</h3>
+              </div>
+              <button className="btn ghost" disabled={busy || !pack.available} onClick={() => runPack(pack.id)}>
+                Load {pack.files.length}
+              </button>
+            </article>
+          ))}
+        </div>
+      )}
     </section>
   );
 }

@@ -21,6 +21,7 @@ export default function App() {
   const [current, setCurrent] = useState(null);
   const [toast, setToast] = useState(null);
   const [busy, setBusy] = useState(false);
+  const [cameraActive, setCameraActive] = useState(false);
 
   const notify = (message, kind = "info") => {
     setToast({ message, kind });
@@ -54,6 +55,11 @@ export default function App() {
     notify(`Working as ${next.full_name}`);
   };
 
+  const goTo = (id) => {
+    setPage(id);
+    if (id === "inbox") loadSlips().catch((err) => notify(err.message, "fail"));
+  };
+
   const counts = useMemo(() => ({
     total: slips.length,
     approved: slips.filter((s) => s.status === "approved").length,
@@ -63,21 +69,19 @@ export default function App() {
   }), [slips]);
 
   return (
-    <div className="app">
-      <aside className="rail">
+    <div className={`app ${cameraActive ? "camera-active" : ""}`}>
+      <aside className="rail" aria-label="Primary">
         <div className="wordmark">
           Result desk
           <span>IEC result slip capture</span>
         </div>
-        <nav className="nav">
+        <nav className="nav desktop-nav">
           {PAGES.map((item) => (
             <button
               key={item.id}
+              type="button"
               className={page === item.id ? "active" : ""}
-              onClick={() => {
-                setPage(item.id);
-                if (item.id === "inbox") loadSlips().catch((err) => notify(err.message, "fail"));
-              }}
+              onClick={() => goTo(item.id)}
             >
               {item.label}
             </button>
@@ -99,6 +103,21 @@ export default function App() {
         </div>
       </aside>
 
+      <header className="mobile-top">
+        <div className="wordmark compact">Result desk</div>
+        <select
+          className="role-select compact"
+          aria-label="Working as"
+          value={user.role}
+          onChange={(e) => switchRole(e.target.value)}
+        >
+          <option value="operator">Operator</option>
+          <option value="supervisor">Supervisor</option>
+          <option value="admin">Admin</option>
+          <option value="auditor">Auditor</option>
+        </select>
+      </header>
+
       <main className="stage">
         {page === "inbox" && (
           <Inbox
@@ -119,6 +138,7 @@ export default function App() {
               setPage("inbox");
             }}
             notify={notify}
+            onCameraActiveChange={setCameraActive}
           />
         )}
         {page === "review" && (
@@ -135,6 +155,19 @@ export default function App() {
         {page === "rules" && <Rules notify={notify} />}
         {page === "log" && <Log />}
       </main>
+
+      <nav className="mobile-nav" aria-label="Primary">
+        {PAGES.map((item) => (
+          <button
+            key={item.id}
+            type="button"
+            className={page === item.id ? "active" : ""}
+            onClick={() => goTo(item.id)}
+          >
+            {item.label}
+          </button>
+        ))}
+      </nav>
 
       {toast && <div className={`toast ${toast.kind}`}>{toast.message}</div>}
     </div>
