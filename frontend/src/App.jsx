@@ -10,7 +10,6 @@ import { Icon } from "./components/Icons.jsx";
 const PAGES = [
   { id: "inbox", label: "Inbox" },
   { id: "capture", label: "Capture" },
-  { id: "review", label: "Review" },
   { id: "rules", label: "Rules" },
   { id: "log", label: "Log" },
 ];
@@ -18,7 +17,6 @@ const PAGES = [
 const PAGE_TITLES = {
   inbox: "Inbox",
   capture: "Capture",
-  review: "Review",
   rules: "Rules",
   log: "Log",
 };
@@ -31,6 +29,7 @@ export default function App() {
   const [toast, setToast] = useState(null);
   const [busy, setBusy] = useState(false);
   const [cameraActive, setCameraActive] = useState(false);
+  const [reviewTab, setReviewTab] = useState("photo");
   const [filters, setFilters] = useState({ search: "", status: "", ballot_type: "" });
   const closeCameraRef = useRef(null);
   const filtersRef = useRef(filters);
@@ -58,17 +57,19 @@ export default function App() {
   const openReview = async (slipId, { push = true } = {}) => {
     const slip = await api.getSlip(slipId);
     setCurrent(slip);
+    setReviewTab("photo");
     setPage("review");
     if (push) pushHistory("review", slipId);
   };
 
   const goTo = (id, { push = true } = {}) => {
+    if (id === "review") return;
     if (cameraActive && closeCameraRef.current) {
       closeCameraRef.current();
     }
     setPage(id);
-    if (id !== "review") setCurrent(null);
-    if (push) pushHistory(id, id === "review" ? current?.id : null);
+    setCurrent(null);
+    if (push) pushHistory(id, null);
     if (id === "inbox") {
       loadSlips(filtersRef.current).catch((err) => notify(err.message, "fail"));
     }
@@ -103,14 +104,21 @@ export default function App() {
       if (closeCameraRef.current && cameraActive) {
         closeCameraRef.current({ fromHistory: true });
       }
-      const nextPage = state.page || "inbox";
-      setPage(nextPage);
+      const nextPage = state.page === "review" && state.slipId ? "review" : (state.page || "inbox");
       if (nextPage === "review" && state.slipId) {
-        api.getSlip(state.slipId).then(setCurrent).catch((err) => notify(err.message, "fail"));
-      } else if (nextPage !== "review") {
-        setCurrent(null);
+        setPage("review");
+        setReviewTab("photo");
+        api.getSlip(state.slipId).then(setCurrent).catch((err) => {
+          notify(err.message, "fail");
+          setPage("inbox");
+          setCurrent(null);
+        });
+        return;
       }
-      if (nextPage === "inbox") {
+      const safePage = PAGES.some((p) => p.id === nextPage) ? nextPage : "inbox";
+      setPage(safePage);
+      setCurrent(null);
+      if (safePage === "inbox") {
         loadSlips(filtersRef.current).catch((err) => notify(err.message, "fail"));
       }
     };
@@ -142,16 +150,14 @@ export default function App() {
     flagged: slips.filter((s) => s.status === "flagged").length,
   }), [slips]);
 
+  const reviewOpen = page === "review";
   const mobileTitle = cameraActive
     ? "Camera"
-    : page === "review" && current
-      ? (current.station_name || current.slip_reference || "Review")
-      : PAGE_TITLES[page] || "Result desk";
-
-  const showBack = page === "review" || cameraActive;
+    : PAGE_TITLES[page] || "Result desk";
+  const showBack = reviewOpen || cameraActive;
 
   return (
-    <div className={`app ${cameraActive ? "camera-active" : ""}`}>
+    <div className={`app ${cameraActive ? "camera-active" : ""} ${reviewOpen ? "review-open" : ""}`}>
       <aside className="rail" aria-label="Primary">
         <div className="wordmark">
           Result desk
@@ -162,7 +168,7 @@ export default function App() {
             <button
               key={item.id}
               type="button"
-              className={page === item.id ? "active" : ""}
+              className={page === item.id || (reviewOpen && item.id === "inbox") ? "active" : ""}
               onClick={() => goTo(item.id)}
             >
               {item.label}
@@ -192,9 +198,32 @@ export default function App() {
               <Icon name="back" size={22} />
             </button>
           ) : null}
-          <div className="mobile-title">{mobileTitle}</div>
+          {reviewOpen && !cameraActive ? (
+            <div className="mobile-review-tabs" role="tablist" aria-label="Review sections">
+              <button
+                type="button"
+                role="tab"
+                aria-selected={reviewTab === "photo"}
+                className={reviewTab === "photo" ? "active" : ""}
+                onClick={() => setReviewTab("photo")}
+              >
+                <Icon name="photo" size={15} /> Photo
+              </button>
+              <button
+                type="button"
+                role="tab"
+                aria-selected={reviewTab === "counts"}
+                className={reviewTab === "counts" ? "active" : ""}
+                onClick={() => setReviewTab("counts")}
+              >
+                <Icon name="counts" size={15} /> Counts
+              </button>
+            </div>
+          ) : (
+            <div className="mobile-title">{mobileTitle}</div>
+          )}
         </div>
-        {page !== "review" && !cameraActive ? (
+        {!reviewOpen && !cameraActive ? (
           <select
             className="role-select compact"
             aria-label="Working as"
@@ -237,6 +266,7 @@ export default function App() {
         {page === "review" && (
           <Review
             slip={current}
+            mobileTab={reviewTab}
             onReload={(id) => openReview(id, { push: false })}
             onInbox={() => goTo("inbox")}
             notify={notify}

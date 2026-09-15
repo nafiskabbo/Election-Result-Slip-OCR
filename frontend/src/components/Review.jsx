@@ -4,18 +4,16 @@ import Viewer from "./Viewer.jsx";
 import Prompt from "./Prompt.jsx";
 import { Icon } from "./Icons.jsx";
 
-export default function Review({ slip, onReload, onInbox, notify }) {
+export default function Review({ slip, mobileTab = "photo", onReload, onInbox, notify }) {
   const [pageIndex, setPageIndex] = useState(0);
   const [highlight, setHighlight] = useState(null);
   const [prompt, setPrompt] = useState(null);
   const [draft, setDraft] = useState(slip || null);
-  const [mobileTab, setMobileTab] = useState("photo");
   const active = draft || slip;
 
   useEffect(() => {
     setDraft(slip || null);
     setPageIndex(0);
-    setMobileTab("photo");
   }, [slip?.id]);
 
   const missing = useMemo(() => {
@@ -301,23 +299,6 @@ export default function Review({ slip, onReload, onInbox, notify }) {
         </div>
         <button type="button" className="btn ghost" onClick={onInbox}>Back to inbox</button>
       </header>
-
-      <div className="review-mobile-tabs mobile-only">
-        <button
-          type="button"
-          className={mobileTab === "photo" ? "active" : ""}
-          onClick={() => setMobileTab("photo")}
-        >
-          <Icon name="photo" size={16} /> Photo
-        </button>
-        <button
-          type="button"
-          className={mobileTab === "counts" ? "active" : ""}
-          onClick={() => setMobileTab("counts")}
-        >
-          <Icon name="counts" size={16} /> Counts
-        </button>
-      </div>
 
       <div className={`workspace ${(active.ballot_type || "").toLowerCase()}`}>
         <div className={`review-photo-pane ${mobileTab === "photo" ? "mobile-show" : "mobile-hide"}`}>
