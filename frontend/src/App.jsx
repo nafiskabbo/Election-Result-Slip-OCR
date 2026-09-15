@@ -153,15 +153,21 @@ export default function App() {
   const reviewOpen = page === "review";
   const mobileTitle = cameraActive
     ? "Camera"
-    : PAGE_TITLES[page] || "Result desk";
+    : PAGE_TITLES[page] || "EFF Result Desk";
   const showBack = reviewOpen || cameraActive;
 
   return (
     <div className={`app ${cameraActive ? "camera-active" : ""} ${reviewOpen ? "review-open" : ""}`}>
       <aside className="rail" aria-label="Primary">
         <div className="wordmark">
-          Result desk
-          <span>IEC result slip capture</span>
+          <img
+            className="brand-logo"
+            src="/logo_eff.webp"
+            alt="Economic Freedom Fighters"
+            width="184"
+            height="89"
+          />
+          <span>Result slip capture</span>
         </div>
         <nav className="nav desktop-nav">
           {PAGES.map((item) => (
@@ -220,7 +226,16 @@ export default function App() {
               </button>
             </div>
           ) : (
-            <div className="mobile-title">{mobileTitle}</div>
+            <div className="mobile-brand">
+              <img
+                className="brand-logo compact"
+                src="/logo_eff.webp"
+                alt=""
+                width="48"
+                height="23"
+              />
+              <div className="mobile-title">{mobileTitle}</div>
+            </div>
           )}
         </div>
         {!reviewOpen && !cameraActive ? (

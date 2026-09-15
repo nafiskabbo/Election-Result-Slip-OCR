@@ -1,0 +1,23 @@
+{
+  "name": "EFF Result Desk",
+  "short_name": "Result Desk",
+  "description": "EFF result slip capture — upload, review, and approve election result slips with OCR-assisted validation.",
+  "start_url": "/",
+  "display": "standalone",
+  "background_color": "#851a1b",
+  "theme_color": "#851a1b",
+  "icons": [
+    {
+      "src": "/logo_eff.webp",
+      "sizes": "500x243",
+      "type": "image/webp",
+      "purpose": "any"
+    },
+    {
+      "src": "/apple-touch-icon.png",
+      "sizes": "180x180",
+      "type": "image/png",
+      "purpose": "any maskable"
+    }
+  ]
+}
