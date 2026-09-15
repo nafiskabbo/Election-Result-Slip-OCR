@@ -1,13 +1,30 @@
-import { useEffect, useState } from "react";
+import { useEffect, useRef, useState } from "react";
 import { api } from "../api.js";
+import CameraCapture, { openRearCamera } from "./CameraCapture.jsx";
 
 export default function Capture({ busy, setBusy, onDone, notify }) {
   const [packs, setPacks] = useState([]);
   const [over, setOver] = useState(false);
   const [note, setNote] = useState("");
+  const [cameraOpen, setCameraOpen] = useState(false);
+  const [liveStream, setLiveStream] = useState(null);
+  const [pending, setPending] = useState([]);
+  const pendingRef = useRef(pending);
+  pendingRef.current = pending;
+  const streamRef = useRef(null);
+  streamRef.current = liveStream;
+  const galleryInputRef = useRef(null);
+  const cameraInputRef = useRef(null);
 
   useEffect(() => {
-    api.samplePacks().then(setPacks).catch((err) => notify(err.message, "fail"));
+    api.samplePacks()
+      .then((list) => setPacks((list || []).filter((pack) => pack.id !== "contest")))
+      .catch((err) => notify(err.message, "fail"));
+  }, []);
+
+  useEffect(() => () => {
+    pendingRef.current.forEach((item) => URL.revokeObjectURL(item.preview));
+    streamRef.current?.getTracks().forEach((track) => track.stop());
   }, []);
 
   const runFiles = async (fileList) => {
@@ -24,6 +41,55 @@ export default function Capture({ busy, setBusy, onDone, notify }) {
     } finally {
       setBusy(false);
       setNote("");
+    }
+  };
+
+  const uploadPending = async () => {
+    if (!pending.length) return;
+    const files = pending.map((item) => item.file);
+    setPending((prev) => {
+      prev.forEach((item) => URL.revokeObjectURL(item.preview));
+      return [];
+    });
+    await runFiles(files);
+  };
+
+  const addCameraPage = (file) => {
+    const preview = URL.createObjectURL(file);
+    setPending((prev) => [...prev, { id: `${Date.now()}-${prev.length}`, file, preview }]);
+    notify("Page captured — add more or upload when the set is ready.", "info");
+  };
+
+  const removePending = (id) => {
+    setPending((prev) => {
+      const item = prev.find((p) => p.id === id);
+      if (item) URL.revokeObjectURL(item.preview);
+      return prev.filter((p) => p.id !== id);
+    });
+  };
+
+  const closeCamera = () => {
+    if (liveStream) {
+      liveStream.getTracks().forEach((track) => track.stop());
+    }
+    setLiveStream(null);
+    setCameraOpen(false);
+  };
+
+  const openNativeCamera = () => {
+    cameraInputRef.current?.click();
+  };
+
+  const openLiveCamera = async (event) => {
+    event.stopPropagation();
+    event.preventDefault();
+    try {
+      const stream = await openRearCamera();
+      setLiveStream(stream);
+      setCameraOpen(true);
+    } catch (err) {
+      notify(err.message || "Live camera is blocked. Using the phone camera app instead.", "warn");
+      openNativeCamera();
     }
   };
 
@@ -47,33 +113,91 @@ export default function Capture({ busy, setBusy, onDone, notify }) {
       <header className="page-head">
         <div>
           <h1>Capture</h1>
-          <p>Drop photographs or PDFs of result slips. The desk crops, reads the barcode, and groups pages that belong together.</p>
+          <p>
+            Photograph each page so all four slip edges sit inside the frame, or drop files from a scanner or gallery.
+            The desk still crops and deskews on the server, but a straight, well-lit shot reads better.
+          </p>
         </div>
       </header>
 
-      <div
-        className={`drop ${over ? "over" : ""}`}
-        onClick={() => document.getElementById("fileInput").click()}
-        onDragOver={(e) => { e.preventDefault(); setOver(true); }}
-        onDragLeave={() => setOver(false)}
-        onDrop={(e) => {
-          e.preventDefault();
-          setOver(false);
-          runFiles(e.dataTransfer.files);
-        }}
-      >
-        <h2>Drop slips on the tray</h2>
-        <p>JPEG, PNG, or PDF. Mixed batches are fine. Each page is enhanced before the numbers are read.</p>
-        <button className="btn" type="button">Choose files</button>
-        <input
-          id="fileInput"
-          type="file"
-          multiple
-          accept=".jpg,.jpeg,.png,.pdf"
-          hidden
-          onChange={(e) => runFiles(e.target.files)}
+      {cameraOpen && liveStream ? (
+        <CameraCapture
+          stream={liveStream}
+          disabled={busy}
+          onCapture={addCameraPage}
+          onClose={closeCamera}
+          onFallback={() => {
+            closeCamera();
+            openNativeCamera();
+          }}
         />
-      </div>
+      ) : (
+        <div
+          className={`drop ${over ? "over" : ""}`}
+          onDragOver={(e) => { e.preventDefault(); setOver(true); }}
+          onDragLeave={() => setOver(false)}
+          onDrop={(e) => {
+            e.preventDefault();
+            setOver(false);
+            runFiles(e.dataTransfer.files);
+          }}
+        >
+          <h2>Drop slips on the tray</h2>
+          <p>JPEG, PNG, or PDF. Mixed batches are fine. Each page is enhanced before the numbers are read.</p>
+          <div className="drop-actions">
+            <button className="btn" type="button" onClick={() => galleryInputRef.current?.click()}>
+              Choose files
+            </button>
+            <button className="btn ghost" type="button" onClick={openLiveCamera}>
+              Use camera
+            </button>
+          </div>
+          <input
+            ref={galleryInputRef}
+            type="file"
+            multiple
+            accept="image/*,.pdf,application/pdf"
+            hidden
+            onChange={(e) => {
+              runFiles(e.target.files);
+              e.target.value = "";
+            }}
+          />
+          <input
+            ref={cameraInputRef}
+            type="file"
+            accept="image/*"
+            capture="environment"
+            hidden
+            onChange={(e) => {
+              const files = Array.from(e.target.files || []);
+              files.forEach(addCameraPage);
+              e.target.value = "";
+            }}
+          />
+        </div>
+      )}
+
+      {pending.length > 0 && (
+        <div className="capture-queue">
+          <div className="capture-queue-head">
+            <h2>{pending.length} page{pending.length === 1 ? "" : "s"} ready to upload</h2>
+            <button className="btn" type="button" disabled={busy} onClick={uploadPending}>
+              Upload {pending.length} page{pending.length === 1 ? "" : "s"}
+            </button>
+          </div>
+          <ul className="capture-thumbs">
+            {pending.map((item, index) => (
+              <li key={item.id}>
+                <img src={item.preview} alt={`Captured page ${index + 1}`} />
+                <button type="button" className="btn ghost" disabled={busy} onClick={() => removePending(item.id)}>
+                  Remove
+                </button>
+              </li>
+            ))}
+          </ul>
+        </div>
+      )}
 
       {busy && <div className="progress">{note || "Working…"}</div>}
 

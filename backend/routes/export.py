@@ -1,6 +1,6 @@
 from typing import Optional
 from fastapi import APIRouter, HTTPException, Query, Response
-from fastapi.responses import Response, JSONResponse
+from fastapi.responses import Response
 from backend.database import get_db_connection
 from backend.export_service import ExportService
 from backend.models import SlipStatusEnum
@@ -8,6 +8,10 @@ from backend.models import SlipStatusEnum
 router = APIRouter(prefix="/api/export", tags=["Export & Reporting"])
 
 export_service = ExportService()
+
+@router.get("/json")
+def export_all_json(status: Optional[str] = Query(None)):
+    return export_service.export_slips_summary_json(status_filter=status)
 
 @router.get("/csv")
 def export_all_csv(status: Optional[str] = Query(None)):
@@ -34,10 +38,7 @@ def export_slip_csv(slip_id: str):
 def export_slip_json(slip_id: str):
     try:
         data = export_service.export_slip_json(slip_id)
-        return JSONResponse(
-            content=data,
-            headers={"Content-Disposition": f"attachment; filename=slip_{slip_id}_data.json"}
-        )
+        return data
     except Exception as e:
         raise HTTPException(status_code=404, detail=str(e))
 

@@ -98,6 +98,21 @@ class ExportService:
         conn.close()
         return output.getvalue()
 
+    def export_slips_summary_json(self, status_filter: Optional[str] = None) -> Dict[str, Any]:
+        conn = get_db_connection()
+        cursor = conn.cursor()
+        if status_filter:
+            cursor.execute("SELECT * FROM slips WHERE status = ? ORDER BY created_at DESC", (status_filter,))
+        else:
+            cursor.execute("SELECT * FROM slips ORDER BY created_at DESC")
+        slips = [dict(row) for row in cursor.fetchall()]
+        conn.close()
+        return {
+            "count": len(slips),
+            "slips": slips,
+            "exported_at": datetime.now(timezone.utc).isoformat(),
+        }
+
     def export_slip_json(self, slip_id: str) -> Dict[str, Any]:
         conn = get_db_connection()
         cursor = conn.cursor()

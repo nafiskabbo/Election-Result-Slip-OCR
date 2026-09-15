@@ -26,3 +26,5 @@ frontend/dist/
 .env.prod
 .venv/
 .vercel
+.local-secrets/
+.agents/skills/vps-komodo

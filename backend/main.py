@@ -62,6 +62,29 @@ app.include_router(audit_router)
 app.include_router(export_router)
 
 
+@app.get("/api")
+def api_index():
+    return {
+        "ok": True,
+        "service": "ballot-ocr",
+        "format": "application/json",
+        "docs": "/docs",
+        "openapi": "/openapi.json",
+        "endpoints": {
+            "health": "GET /api/health",
+            "current_user": "GET /api/auth/current",
+            "slips": "GET /api/slips",
+            "slip": "GET /api/slips/{id}",
+            "upload": "POST /api/upload",
+            "samples": "GET /api/upload/samples",
+            "rules": "GET /api/rules",
+            "audit": "GET /api/audit",
+            "export_all_json": "GET /api/export/json",
+            "export_slip_json": "GET /api/export/slips/{id}/json",
+        },
+    }
+
+
 @app.get("/api/health")
 def health():
     return {"ok": True, "service": "ballot-ocr"}

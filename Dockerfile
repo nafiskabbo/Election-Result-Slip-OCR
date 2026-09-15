@@ -1,5 +1,13 @@
 # syntax=docker/dockerfile:1
-# Python API image for Render. The React desk is deployed separately on Vercel.
+# Isolated ballot image: FastAPI + built React desk (same origin).
+
+FROM node:24-bookworm-slim AS frontend
+WORKDIR /src
+COPY frontend/package.json frontend/package-lock.json ./
+RUN npm ci
+COPY frontend/ ./
+ENV VITE_API_URL=
+RUN npm run build
 
 FROM python:3.11-slim
 
@@ -21,6 +29,7 @@ RUN pip install --upgrade pip && pip install -r requirements.txt
 
 COPY backend ./backend
 COPY sample_slips ./sample_slips
+COPY --from=frontend /src/dist ./frontend/dist
 
 RUN mkdir -p storage/raw storage/enhanced storage/thumbnails
 

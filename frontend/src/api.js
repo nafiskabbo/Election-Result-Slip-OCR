@@ -15,8 +15,8 @@ async function request(path, options = {}) {
     res = await fetch(apiUrl(path), { credentials: "omit", ...options });
   } catch {
     const hint = API_BASE
-      ? `Cannot reach the API at ${API_BASE}. Confirm the Render service is live.`
-      : "Cannot reach the API. On Vercel, set VITE_API_URL to your Render URL and redeploy.";
+      ? `Cannot reach the API at ${API_BASE}.`
+      : "Cannot reach the API. Set VITE_API_URL if the desk is hosted separately from the backend.";
     throw new Error(hint);
   }
   const contentType = res.headers.get("content-type") || "";

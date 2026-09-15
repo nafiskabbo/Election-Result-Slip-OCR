@@ -33,12 +33,6 @@ def cors_allow_origins() -> list[str]:
 
 SAMPLE_PACKS = [
     {
-        "id": "contest",
-        "title": "Contest photographs 1–4",
-        "blurb": "Four photos from Britten Station Shop. Regional pages 1 and 2 group into one slip. The provincial slip is missing page 2. The national slip is missing pages 1 and 2, so those two stay incomplete on purpose.",
-        "files": ["image1.jpg", "image2.jpg", "image3.jpg", "image4.jpg"],
-    },
-    {
         "id": "limpopo-national",
         "title": "Limpopo national, complete",
         "blurb": "Three pages from Bakgaga Ba-Maake Traditional Authority (VD 76240234). This is a full national set and should pass the page-completeness check.",

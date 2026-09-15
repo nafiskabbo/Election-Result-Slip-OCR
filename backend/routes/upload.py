@@ -3,6 +3,7 @@ import uuid
 import time
 from typing import List
 from fastapi import APIRouter, UploadFile, File, HTTPException
+from fastapi.encoders import jsonable_encoder
 from backend.image_enhancer import ImageEnhancer
 from backend.ocr_engine import OCREngine
 from backend.grouping_engine import GroupingEngine
@@ -57,9 +58,9 @@ def _process_saved_file(raw_path: str, original_filename: str, file_size: int, m
             "barcode_text": extracted_data["barcode_text"],
             "enhanced_file_path": enh_path,
             "thumbnail_path": thumb_path,
-            "enhancement_seconds": enh_res.elapsed_seconds,
-            "is_perspective_corrected": enh_res.is_perspective_corrected,
-            "skew_angle": enh_res.skew_angle,
+            "enhancement_seconds": float(enh_res.elapsed_seconds),
+            "is_perspective_corrected": bool(enh_res.is_perspective_corrected),
+            "skew_angle": float(enh_res.skew_angle),
             "grouping": summary,
         })
 
@@ -110,14 +111,14 @@ def upload_sample_pack(pack_id: str):
         validation_engine.evaluate_slip(s_id)
 
     total_time = round(time.time() - t0, 3)
-    return {
+    return jsonable_encoder({
         "pack_id": pack_id,
         "processed_pages_count": len(processed_pages),
         "affected_slips": list(affected_slips),
         "pages": processed_pages,
         "total_elapsed_seconds": total_time,
         "average_per_page_seconds": round(total_time / float(max(1, len(processed_pages))), 3),
-    }
+    })
 
 
 @router.post("")
@@ -153,10 +154,10 @@ async def upload_batch(files: List[UploadFile] = File(...)):
 
     total_time = round(time.time() - t0, 3)
 
-    return {
+    return jsonable_encoder({
         "processed_pages_count": len(processed_pages),
         "affected_slips": list(affected_slips),
         "pages": processed_pages,
         "total_elapsed_seconds": total_time,
         "average_per_page_seconds": round(total_time / float(max(1, len(processed_pages))), 3),
-    }
+    })

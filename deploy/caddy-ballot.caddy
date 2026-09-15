@@ -1,0 +1,6 @@
+# BEGIN ballot-ocr (isolated; delete this block to unhost)
+ballot.139.99.135.121.sslip.io {
+	encode gzip
+	reverse_proxy 127.0.0.1:8010
+}
+# END ballot-ocr

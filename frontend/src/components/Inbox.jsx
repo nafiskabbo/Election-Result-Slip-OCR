@@ -79,7 +79,7 @@ export default function Inbox({ slips, counts, onRefresh, onOpen, onCapture, not
             {slips.length === 0 && (
               <tr>
                 <td colSpan="7" className="empty">
-                  Nothing captured yet. Load the contest photographs from Capture to see grouping.
+                  Nothing captured yet. Photograph a slip or load a sample pack from Capture.
                 </td>
               </tr>
             )}
