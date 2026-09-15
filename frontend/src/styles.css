@@ -425,6 +425,24 @@ table.data tr.provincial { box-shadow: inset 4px 0 0 var(--provincial); }
 table.data tr.regional { box-shadow: inset 4px 0 0 var(--regional); }
 table.data tr.national { box-shadow: inset 4px 0 0 var(--national); }
 .row-actions { display: flex; gap: 0.35rem; justify-content: flex-end; }
+.ref-link {
+  display: inline;
+  padding: 0;
+  border: 0;
+  background: transparent;
+  color: inherit;
+  font: inherit;
+  text-align: left;
+  cursor: pointer;
+}
+.ref-link:hover strong,
+.ref-link:focus-visible strong {
+  text-decoration: underline;
+}
+.icon-btn.danger {
+  color: var(--fail);
+  border-color: color-mix(in srgb, var(--fail) 35%, var(--rule));
+}
 .empty {
   padding: 2rem 1rem;
   text-align: center;
@@ -436,17 +454,35 @@ table.data tr.national { box-shadow: inset 4px 0 0 var(--national); }
   gap: 0.55rem;
 }
 .slip-card {
-  display: block;
+  display: flex;
+  align-items: stretch;
+  gap: 0.35rem;
   width: 100%;
   text-align: left;
   background: #fff;
   border: 1px solid var(--rule);
-  padding: 0.8rem 0.85rem;
+  padding: 0.55rem 0.5rem 0.55rem 0.85rem;
   box-shadow: inset 4px 0 0 transparent;
 }
 .slip-card.provincial { box-shadow: inset 4px 0 0 var(--provincial); }
 .slip-card.regional { box-shadow: inset 4px 0 0 var(--regional); }
 .slip-card.national { box-shadow: inset 4px 0 0 var(--national); }
+.slip-card-main {
+  flex: 1;
+  min-width: 0;
+  padding: 0.25rem 0;
+  border: 0;
+  background: transparent;
+  color: inherit;
+  font: inherit;
+  text-align: left;
+  cursor: pointer;
+}
+.slip-card-actions {
+  display: flex;
+  align-items: center;
+  flex-shrink: 0;
+}
 .slip-card-top,
 .slip-card-meta {
   display: flex;

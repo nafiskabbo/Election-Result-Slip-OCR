@@ -2,6 +2,7 @@ import json
 from datetime import datetime, timezone
 from typing import List, Optional
 from fastapi import APIRouter, HTTPException, Query
+from backend.config import DATA_DIR
 from backend.database import get_db_connection
 from backend.models import (
     SlipSummaryResponse, SlipDetailResponse, SlipFieldUpdate,
@@ -329,6 +330,52 @@ def flag_slip(slip_id: str, action: SlipStatusAction):
     )
 
     return {"message": "Slip flagged for review", "slip_id": slip_id, "status": "flagged"}
+
+
+@router.delete("/{slip_id}")
+def delete_slip(slip_id: str):
+    conn = get_db_connection()
+    cursor = conn.cursor()
+
+    cursor.execute("SELECT id, slip_reference FROM slips WHERE id = ?", (slip_id,))
+    slip = cursor.fetchone()
+    if not slip:
+        conn.close()
+        raise HTTPException(status_code=404, detail=f"Slip {slip_id} not found.")
+
+    cursor.execute(
+        "SELECT raw_file_path, enhanced_file_path, thumbnail_path FROM slip_pages WHERE slip_id = ?",
+        (slip_id,),
+    )
+    pages = cursor.fetchall()
+
+    cursor.execute("DELETE FROM slips WHERE id = ?", (slip_id,))
+    conn.commit()
+    conn.close()
+
+    for page in pages:
+        for key in ("raw_file_path", "enhanced_file_path", "thumbnail_path"):
+            rel = page.get(key)
+            if not rel:
+                continue
+            path = DATA_DIR / rel
+            try:
+                if path.is_file():
+                    path.unlink()
+            except OSError:
+                pass
+
+    audit_service.log_event(
+        user_id=ACTIVE_USER_STATE["id"],
+        action="delete_slip",
+        slip_id=None,
+        field_name="slip",
+        old_value=slip["slip_reference"],
+        new_value=None,
+        reason=f"Deleted slip {slip_id}",
+    )
+
+    return {"message": "Slip deleted", "slip_id": slip_id}
 
 
 @router.delete("")

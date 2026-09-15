@@ -52,6 +52,18 @@ export default function Inbox({
     notify("Inbox cleared");
   };
 
+  const remove = async (slip) => {
+    const label = slip.slip_reference || "this slip";
+    if (!window.confirm(`Delete ${label}? This cannot be undone.`)) return;
+    try {
+      await api.deleteSlip(slip.id);
+      await onFiltersChange({ search, status, ballot_type: ballotType });
+      notify(`Deleted ${label}`);
+    } catch (err) {
+      notify(err.message, "fail");
+    }
+  };
+
   const applySheet = () => {
     commit({ status, ballot_type: ballotType });
     setSheetOpen(false);
@@ -169,7 +181,13 @@ export default function Inbox({
               return (
                 <tr key={slip.id} className={(slip.ballot_type || "").toLowerCase()}>
                   <td>
-                    <strong>{slip.slip_reference}</strong>
+                    <button
+                      type="button"
+                      className="ref-link"
+                      onClick={() => onOpen(slip.id)}
+                    >
+                      <strong>{slip.slip_reference}</strong>
+                    </button>
                     <div className="sub">VD {slip.voting_district}</div>
                   </td>
                   <td>
@@ -195,6 +213,7 @@ export default function Inbox({
                   <td>
                     <div className="row-actions">
                       <button type="button" className="btn ghost" onClick={() => onOpen(slip.id)}>Open</button>
+                      <button type="button" className="btn ghost" onClick={() => remove(slip)}>Delete</button>
                     </div>
                   </td>
                 </tr>
@@ -209,25 +228,39 @@ export default function Inbox({
         {slips.map((slip) => {
           const complete = slip.total_received_pages >= slip.total_expected_pages;
           return (
-            <button
-              type="button"
+            <div
               key={slip.id}
               className={`slip-card ${(slip.ballot_type || "").toLowerCase()}`}
-              onClick={() => onOpen(slip.id)}
             >
-              <div className="slip-card-top">
-                <strong>{slip.slip_reference}</strong>
-                <span className={`chip ${slip.status}`}>{statusLabel(slip.status)}</span>
+              <button
+                type="button"
+                className="slip-card-main"
+                onClick={() => onOpen(slip.id)}
+              >
+                <div className="slip-card-top">
+                  <strong>{slip.slip_reference}</strong>
+                  <span className={`chip ${slip.status}`}>{statusLabel(slip.status)}</span>
+                </div>
+                <div className="slip-card-meta">
+                  <span className={`chip ${(slip.ballot_type || "").toLowerCase()}`}>{slip.ballot_type}</span>
+                  <span className={`chip ${complete ? "approved" : "incomplete"}`}>
+                    {slip.total_received_pages}/{slip.total_expected_pages}
+                  </span>
+                </div>
+                <div className="slip-card-station">{slip.station_name || "Station unread"}</div>
+                <div className="sub">VD {slip.voting_district} · {slip.total_valid_votes} valid</div>
+              </button>
+              <div className="slip-card-actions">
+                <button
+                  type="button"
+                  className="icon-btn danger"
+                  aria-label={`Delete ${slip.slip_reference}`}
+                  onClick={() => remove(slip)}
+                >
+                  <Icon name="delete" size={18} />
+                </button>
               </div>
-              <div className="slip-card-meta">
-                <span className={`chip ${(slip.ballot_type || "").toLowerCase()}`}>{slip.ballot_type}</span>
-                <span className={`chip ${complete ? "approved" : "incomplete"}`}>
-                  {slip.total_received_pages}/{slip.total_expected_pages}
-                </span>
-              </div>
-              <div className="slip-card-station">{slip.station_name || "Station unread"}</div>
-              <div className="sub">VD {slip.voting_district} · {slip.total_valid_votes} valid</div>
-            </button>
+            </div>
           );
         })}
       </div>

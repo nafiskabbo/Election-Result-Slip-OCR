@@ -96,6 +96,7 @@ export function Icon({ name, size = 18, className = "" }) {
         </svg>
       );
     case "clear":
+    case "delete":
       return (
         <svg {...props}>
           <path d="M3 6h18" />

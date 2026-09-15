@@ -66,6 +66,7 @@ export const api = {
     headers: jsonHeaders,
     body: JSON.stringify({ status: "flagged", reason }),
   }),
+  deleteSlip: (id) => request(`/api/slips/${id}`, { method: "DELETE" }),
   clearSlips: () => request("/api/slips", { method: "DELETE" }),
   upload: (files) => {
     const form = new FormData();
