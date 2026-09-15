@@ -312,3 +312,16 @@ def flag_slip(slip_id: str, action: SlipStatusAction):
     )
 
     return {"message": "Slip flagged for review", "slip_id": slip_id, "status": "flagged"}
+
+
+@router.delete("")
+def clear_all_slips():
+    conn = get_db_connection()
+    cursor = conn.cursor()
+    cursor.execute("DELETE FROM validation_results")
+    cursor.execute("DELETE FROM party_results")
+    cursor.execute("DELETE FROM slip_pages")
+    cursor.execute("DELETE FROM slips")
+    conn.commit()
+    conn.close()
+    return {"message": "All captured slips were cleared."}

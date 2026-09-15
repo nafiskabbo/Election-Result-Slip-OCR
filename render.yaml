@@ -1,0 +1,18 @@
+# Render Blueprint — Python OCR API
+# Dashboard: New Blueprint Instance → this repo
+# After the first deploy, set CORS_ORIGINS to your Vercel URL (no trailing slash).
+
+services:
+  - type: web
+    name: ballot-api
+    runtime: docker
+    dockerfilePath: ./Dockerfile
+    dockerContext: .
+    healthCheckPath: /api/health
+    envVars:
+      - key: CORS_ORIGINS
+        value: "*"
+      - key: CORS_ORIGIN_REGEX
+        value: "https://.*\\.vercel\\.app"
+      - key: PYTHONUNBUFFERED
+        value: "1"

@@ -73,3 +73,42 @@ def test_sample_4_national_p3_ocr(ocr_engine):
     assert "001334868205981031" in data["barcode_text"]
     assert data["total_valid_votes"] == 52
     assert data["total_votes_cast"] == 52
+
+
+def test_limpopo_national_does_not_use_britten_defaults(ocr_engine):
+    img = cv2.imread("sample_slips/i_1.jpg")
+    data = ocr_engine.extract_full_slip_data(img)
+
+    assert data["ballot_type"] == "National"
+    assert data["voting_district"] == "76240234"
+    assert data["page_number"] == 1
+    assert data["page_total"] == 3
+    assert "001334762402341011" in data["barcode_text"]
+    assert data["registered_voters"] == 1149
+    assert "BRITTEN" not in (data["station_name"] or "")
+    assert "BAKGAGA" in (data["station_name"] or "")
+    votes_by_code = {p["party_code"]: p["votes"] for p in data["party_results"]}
+    assert votes_by_code.get("ANC") == 481
+    assert votes_by_code.get("EFF") == 77
+
+
+def test_limpopo_national_final_totals(ocr_engine):
+    img = cv2.imread("sample_slips/i_3.jpg")
+    data = ocr_engine.extract_full_slip_data(img)
+    assert data["page_number"] == 3
+    assert data["page_total"] == 3
+    assert data["total_valid_votes"] == 574
+    assert data["total_spoilt_votes"] == 4
+    assert data["total_votes_cast"] == 578
+    assert data["special_votes"] == 25
+
+
+def test_limpopo_regional_reads_three_page_set(ocr_engine):
+    img = cv2.imread("sample_slips/i_4.jpg")
+    data = ocr_engine.extract_full_slip_data(img)
+    assert data["ballot_type"] == "Regional"
+    assert data["page_number"] == 1
+    assert data["page_total"] == 3
+    votes_by_code = {p["party_code"]: p["votes"] for p in data["party_results"]}
+    assert votes_by_code.get("ANC") == 462
+    assert votes_by_code.get("EFF") == 97

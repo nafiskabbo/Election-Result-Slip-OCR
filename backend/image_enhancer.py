@@ -127,12 +127,10 @@ class ImageEnhancer:
         # Compute width
         width_a = np.sqrt(((br[0] - bl[0]) ** 2) + ((br[1] - bl[1]) ** 2))
         width_b = np.sqrt(((tr[0] - tl[0]) ** 2) + ((tr[1] - tl[1]) ** 2))
-        max_width = max(int(width_a), int(width_b), self.target_width)
-
-        # Compute height
         height_a = np.sqrt(((tr[0] - br[0]) ** 2) + ((tr[1] - br[1]) ** 2))
         height_b = np.sqrt(((tl[0] - bl[0]) ** 2) + ((tl[1] - bl[1]) ** 2))
-        max_height = max(int(height_a), int(height_b), self.target_height)
+        max_width = max(int(width_a), int(width_b), 400)
+        max_height = max(int(height_a), int(height_b), 400)
 
         dst = np.array([
             [0, 0],
@@ -143,7 +141,16 @@ class ImageEnhancer:
 
         matrix = cv2.getPerspectiveTransform(rect, dst)
         warped = cv2.warpPerspective(img, matrix, (max_width, max_height), flags=cv2.INTER_LANCZOS4)
-        return warped
+        return self.limit_size(warped, max_side=2000)
+
+    @staticmethod
+    def limit_size(img: np.ndarray, max_side: int = 1800) -> np.ndarray:
+        h, w = img.shape[:2]
+        longest = max(h, w)
+        if longest <= max_side or longest == 0:
+            return img
+        scale = max_side / float(longest)
+        return cv2.resize(img, (int(w * scale), int(h * scale)), interpolation=cv2.INTER_AREA)
 
     def detect_skew_angle(self, gray: np.ndarray) -> float:
         h, w = gray.shape[:2]
@@ -226,8 +233,47 @@ class ImageEnhancer:
 
         return denoised, binary
 
+    def header_bar_score(self, img: np.ndarray) -> float:
+        """How much of the top strip is a solid IEC colour bar, not scattered logos."""
+        h, w = img.shape[:2]
+        strip = img[: max(8, int(h * 0.12)), :]
+        hsv = cv2.cvtColor(strip, cv2.COLOR_BGR2HSV)
+        ranges = [
+            (np.array([145, 70, 80]), np.array([175, 255, 255])),
+            (np.array([8, 130, 90]), np.array([22, 255, 255])),
+            (np.array([95, 80, 70]), np.array([130, 255, 255])),
+        ]
+        best = 0.0
+        for lo, hi in ranges:
+            mask = cv2.inRange(hsv, lo, hi)
+            if mask.size == 0:
+                continue
+            frac = (mask > 0).mean(axis=1)
+            if len(frac):
+                best = max(best, float(np.max(frac)))
+        return best
+
+    def upright_orientation(self, img: np.ndarray) -> np.ndarray:
+        """Rotate phone photos so the coloured header bar sits at the top."""
+        h, w = img.shape[:2]
+        if w > h:
+            portraits = [
+                cv2.rotate(img, cv2.ROTATE_90_CLOCKWISE),
+                cv2.rotate(img, cv2.ROTATE_90_COUNTERCLOCKWISE),
+            ]
+        else:
+            return img
+        candidates = []
+        for cand in portraits:
+            candidates.append(cand)
+            candidates.append(cv2.rotate(cand, cv2.ROTATE_180))
+        scored = [(self.header_bar_score(cand), cand) for cand in candidates]
+        scored.sort(key=lambda item: item[0], reverse=True)
+        return scored[0][1]
+
     def process_image(self, img: np.ndarray) -> ImageEnhancementResult:
         t0 = time.time()
+        img = self.upright_orientation(img)
         raw_h, raw_w = img.shape[:2]
 
         # Step 1: Detect Paper Boundary & Perspective Transform
@@ -237,12 +283,9 @@ class ImageEnhancer:
             processed = self.warp_perspective(img, quad)
             is_perspective_corrected = True
         else:
-            # If no quad found, resize to standard target height if needed
-            if raw_h < self.target_height * 0.7:
-                scale = self.target_height / float(raw_h)
-                processed = cv2.resize(img, (0, 0), fx=scale, fy=scale, interpolation=cv2.INTER_CUBIC)
-            else:
-                processed = img.copy()
+            processed = img.copy()
+
+        processed = self.limit_size(processed, max_side=1800)
 
         # Step 2: Deskew
         gray_temp = cv2.cvtColor(processed, cv2.COLOR_BGR2GRAY)

@@ -37,12 +37,16 @@ class GroupingEngine:
         page_total = extracted_data["page_total"]
         barcode_text = extracted_data["barcode_text"]
 
-        # Rule 1: Find if an existing slip record exists for this logical slip
-        cursor.execute("""
-            SELECT * FROM slips 
-            WHERE slip_reference = ? OR (voting_district = ? AND ballot_type = ?)
-        """, (slip_ref, vd, ballot_type))
+        # Rule 1: Group by barcode slip reference. If that is missing, same VD + ballot type.
+        existing_slip = None
+        cursor.execute("SELECT * FROM slips WHERE slip_reference = ?", (slip_ref,))
         existing_slip = cursor.fetchone()
+        if not existing_slip and vd and vd != "UNKNOWN":
+            cursor.execute(
+                "SELECT * FROM slips WHERE voting_district = ? AND ballot_type = ?",
+                (vd, ballot_type),
+            )
+            existing_slip = cursor.fetchone()
 
         exception_flags = []
         page_id = f"page_{uuid.uuid4().hex[:12]}"
@@ -56,13 +60,56 @@ class GroupingEngine:
             """, (slip_id, page_num))
             dup_page = cursor.fetchone()
             if dup_page:
-                exception_flags.append(f"DUPLICATE_PAGE: Page {page_num} already exists for this slip.")
+                # Re-processing the same page replaces the previous capture
+                cursor.execute("DELETE FROM party_results WHERE page_id = ?", (dup_page["id"],))
+                cursor.execute("DELETE FROM slip_pages WHERE id = ?", (dup_page["id"],))
 
             # Check for conflicting metadata (Rule 3)
-            if existing_slip["voting_district"] != vd:
+            if existing_slip["voting_district"] != vd and vd not in ("UNKNOWN", "") and existing_slip["voting_district"] not in ("UNKNOWN", ""):
                 exception_flags.append(f"MISMATCHED_VD: Existing VD {existing_slip['voting_district']} != incoming VD {vd}.")
             if existing_slip["ballot_type"] != ballot_type:
                 exception_flags.append(f"MISMATCHED_BALLOT_TYPE: Existing {existing_slip['ballot_type']} != incoming {ballot_type}.")
+
+            updates = []
+            params = []
+            if page_total and page_total > (existing_slip["total_expected_pages"] or 0):
+                updates.append("total_expected_pages = ?")
+                params.append(page_total)
+            if extracted_data.get("station_name") and not existing_slip["station_name"]:
+                updates.append("station_name = ?")
+                params.append(extracted_data["station_name"])
+            if extracted_data.get("municipality") and not existing_slip["municipality"]:
+                updates.append("municipality = ?")
+                params.append(extracted_data["municipality"])
+            if extracted_data.get("province") and not existing_slip["province"]:
+                updates.append("province = ?")
+                params.append(extracted_data["province"])
+            if extracted_data.get("registered_voters") and not existing_slip["registered_voters"]:
+                updates.append("registered_voters = ?")
+                params.append(extracted_data["registered_voters"])
+            if extracted_data.get("presiding_officer_name") and not existing_slip["presiding_officer_name"]:
+                updates.append("presiding_officer_name = ?")
+                params.append(extracted_data["presiding_officer_name"])
+            if page_num == page_total:
+                updates.extend([
+                    "total_valid_votes = ?",
+                    "total_spoilt_votes = ?",
+                    "total_votes_cast = ?",
+                    "special_votes = ?",
+                    "section_24a_votes = ?",
+                    "presiding_officer_signature_detected = ?",
+                ])
+                params.extend([
+                    extracted_data.get("total_valid_votes", 0),
+                    extracted_data.get("total_spoilt_votes", 0),
+                    extracted_data.get("total_votes_cast", 0),
+                    extracted_data.get("special_votes", 0),
+                    extracted_data.get("section_24a_votes", 0),
+                    1 if extracted_data.get("presiding_officer_signature_detected") else 0,
+                ])
+            if updates:
+                params.append(slip_id)
+                cursor.execute(f"UPDATE slips SET {', '.join(updates)} WHERE id = ?", params)
 
         else:
             slip_id = f"slip_{uuid.uuid4().hex[:12]}"
@@ -208,13 +255,6 @@ class GroupingEngine:
                 consolidated_parties[code]["votes"] += r["votes"]
 
         sum_party_votes = sum(p["votes"] for p in consolidated_parties.values())
-
-        # Pull totals from final page if present
-        cursor.execute("""
-            SELECT p.id FROM slip_pages p 
-            WHERE p.slip_id = ? AND p.page_number = ?
-        """, (slip_id, expected_total))
-        final_page = cursor.fetchone()
 
         # Determine status
         has_exceptions = False

@@ -23,7 +23,7 @@ A full-stack election result digitisation platform that automates the capture, e
 | **Image Processing** | OpenCV 5.0, Pillow              |
 | **Database**      | SQLite (WAL mode)                  |
 | **PDF Export**     | ReportLab                         |
-| **Frontend**      | Vanilla HTML/CSS/JS SPA            |
+| **Frontend**      | React 18 + Vite                     |
 | **Testing**       | Pytest + HTTPX                     |
 
 ## Project Structure
@@ -48,13 +48,9 @@ ballot/
 │       ├── rules.py           # Validation rule management
 │       ├── audit.py           # Audit trail queries
 │       └── export.py          # Export endpoints
-├── frontend/
-│   ├── index.html             # SPA with 5 tabs
-│   ├── css/style.css          # Election command theme
-│   └── js/
-│       ├── app.js             # State management & API client
-│       ├── viewer.js          # Pan/zoom/rotate image viewer
-│       └── components.js      # UI component renderers
+├── frontend/                  # React (Vite) operator desk
+│   ├── src/App.jsx
+│   └── src/components/
 ├── tests/
 │   ├── test_enhancement.py    # Image pipeline tests
 │   ├── test_ocr.py            # OCR extraction accuracy tests
@@ -79,6 +75,7 @@ ballot/
 
 - Python 3.10 or higher
 - pip
+- Node 20+ (to build the React UI)
 
 ### Installation
 
@@ -93,6 +90,7 @@ source venv/bin/activate
 
 # Install dependencies
 pip install -r requirements.txt
+cd frontend && npm install && npm run build && cd ..
 ```
 
 ### Running the Application
@@ -102,12 +100,14 @@ pip install -r requirements.txt
 chmod +x run.sh
 ./run.sh
 
-# Option 2: Manual start
+# Option 2: API and Vite separately (this is how Render + Vercel run)
 source venv/bin/activate
 python -m uvicorn backend.main:app --host 0.0.0.0 --port 8000 --reload
+# in another terminal:
+cd frontend && npm install && npm run dev
 ```
 
-Open **http://localhost:8000** in your browser.
+Open **http://localhost:5173** for the desk (Vite proxies `/api` to port 8000), or **http://localhost:8000** if you used `./run.sh`.
 
 ### Running Tests
 
@@ -116,16 +116,7 @@ source venv/bin/activate
 python -m pytest tests/ -v
 ```
 
-All **14 tests** should pass:
-
-| Test File               | Tests | Coverage Area                    |
-|-------------------------|-------|----------------------------------|
-| `test_enhancement.py`   | 2     | Image pipeline performance       |
-| `test_ocr.py`           | 4     | OCR extraction accuracy (4 slips)|
-| `test_multi_page.py`    | 3     | Multi-page grouping rules        |
-| `test_validation.py`    | 2     | Validation engine checks         |
-| `test_audit.py`         | 1     | Audit trail immutability         |
-| `test_api.py`           | 2     | End-to-end API integration       |
+Pytest covers enhancement, OCR, grouping, validation, audit, and the API. Run it after a `pip install`.
 
 ## API Documentation
 
@@ -147,36 +138,69 @@ See [`API_SPECIFICATION.md`](docs/API_SPECIFICATION.md) for the full REST API re
 
 ## Validation Rules
 
-| Code           | Rule                                              | Default Severity |
-|----------------|---------------------------------------------------|-----------------|
-| MATH_RECON     | total_valid + total_spoilt = total_votes_cast      | critical        |
-| TURNOUT_CEIL   | total_votes_cast ≤ registered_voters               | critical        |
-| PARTY_TOTAL    | Σ party votes = total_valid_votes                  | warning         |
-| SPOILT_THRESH  | spoilt_votes < 5% of total                         | warning         |
-| DUP_DETECT     | No duplicate slip_reference in database            | warning         |
-| REG_VOTER_CEIL | total_valid ≤ registered_voters                    | critical        |
-| PAGE_COMPLETE  | All expected pages received                        | critical        |
+| Code                     | Rule                                              | Default Severity |
+|--------------------------|---------------------------------------------------|-----------------|
+| SUM_PARTY_VOTES_MATCH    | Sum of party votes equals total valid votes       | critical        |
+| RECONCILIATION_MATCH     | valid + spoilt = votes cast                       | critical        |
+| TURNOUT_CEILING          | Votes cast cannot exceed registered voters        | critical        |
+| ALL_PAGES_PRESENT        | All pages of the slip must be present             | critical        |
+| OFFICER_SIGNATURE_PRESENT| Presiding officer signature on the final page     | warning         |
+| DUPLICATE_VD_BALLOT      | No second approved slip for the same VD and type  | critical        |
+| PARTY_SIGNATURE_CONSISTENCY | Agent signature on rows with votes             | warning         |
 
 ## Sample Data
 
-4 sample ballot slip images are included in `sample_slips/`:
+High-quality photographed slips live in `sample_slips/`. Debug crops were removed.
 
-| Image        | Ballot Type | Page   | Station               |
-|--------------|-------------|--------|-----------------------|
-| `image1.jpg` | Provincial  | 1 of 2 | Britten Station Shop  |
-| `image2.jpg` | Regional    | 1 of 2 | —                     |
-| `image3.jpg` | Regional    | 2 of 2 | Links with image2     |
-| `image4.jpg` | National    | 3 of 3 | —                     |
+| Image        | Ballot Type | Page   | Station                          |
+|--------------|-------------|--------|----------------------------------|
+| `image1.jpg` | Provincial  | 1 of 2 | Britten Station Shop             |
+| `image2.jpg` | Regional    | 1 of 2 | Britten Station Shop             |
+| `image3.jpg` | Regional    | 2 of 2 | Groups with image2               |
+| `image4.jpg` | National    | 3 of 3 | Britten Station Shop             |
+| `i_1.jpg`    | National    | 1 of 3 | Bakgaga Ba-Maake Traditional Aut |
+| `i_2.jpg`    | National    | 2 of 3 | Same Limpopo station             |
+| `i_3.jpg`    | National    | 3 of 3 | Completes the national set       |
+| `i_4.jpg`    | Regional    | 1 of 3 | Same Limpopo station             |
+| `i_5.jpg`    | Regional    | 2 of 3 | Missing page 3                   |
+
+Contest photographs 1–4 become **three slips**, not four: regional pages 1 and 2 are one result. Provincial is missing page 2. National is missing pages 1 and 2. That is grouping working, not a lost file.
+
+## Render + Vercel
+
+The Python API runs on Render. The React desk runs on Vercel and calls that API.
+
+### 1. Backend on Render
+
+1. Push this repo to GitHub.
+2. In Render, create a **Blueprint** from the repo (`render.yaml`) or a **Web Service** with:
+   - Runtime: **Docker**
+   - Dockerfile path: `./Dockerfile`
+   - Health check: `/api/health`
+3. After the first deploy, copy the service URL, e.g. `https://ballot-api.onrender.com`.
+4. Set `CORS_ORIGINS` to your Vercel origin (no trailing slash), or leave `*` while you are wiring things up.
+
+Optional persistent disk (paid plans): mount `/data` and set `DATA_DIR=/data`, `BALLOT_DB_PATH=/data/ballot_ocr.db`, `STORAGE_DIR=/data/storage`. Without a disk, SQLite and uploads reset on each deploy.
+
+OCR needs more than Render’s free 512 MB. Use at least a **Starter** instance if uploads die with out-of-memory errors.
+
+### 2. Frontend on Vercel
+
+1. Import the same GitHub repo in Vercel.
+2. Leave the root directory as the repo root. `vercel.json` builds `frontend/` and publishes `frontend/dist`.
+3. Add environment variable **`VITE_API_URL`** = the Render URL from step 1, **no trailing slash**.
+4. Deploy. Vite bakes `VITE_API_URL` into the bundle, so change it only by redeploying.
+
+Local check of the split: `VITE_API_URL=http://127.0.0.1:8000 npm run build --prefix frontend && npm run preview --prefix frontend`.
 
 ## Usage Workflow
 
-1. **Upload** — Drag & drop ballot slip images on the Upload tab
-2. **Auto-Process** — System enhances images, extracts data via OCR, groups pages
-3. **Review** — Operators verify extracted data side-by-side with the enhanced image
-4. **Correct** — Override any misread values with reason (audit logged)
-5. **Validate** — System checks mathematical reconciliation and business rules
-6. **Approve** — Supervisor approves verified results
-7. **Export** — Download CSV/JSON/PDF certificate for approved results
+1. **Capture** — Drop result slip photographs, or load one of the sample packs
+2. **Inbox** — Four contest photos become three slips because regional pages 1 and 2 belong together
+3. **Review** — Check the photograph against the extracted counts
+4. **Correct** — Override a misread; the change is written to the audit log
+5. **Approve** — Blocked until every page is present and critical checks pass
+6. **Export** — CSV, JSON, or a PDF certificate for approved slips
 
 ## License
 

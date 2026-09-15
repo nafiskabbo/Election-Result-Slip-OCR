@@ -14,7 +14,14 @@ def setup_test_api_db(tmp_path, monkeypatch):
 
 @pytest.fixture
 def client():
-    return TestClient(app)
+    with TestClient(app) as test_client:
+        yield test_client
+
+def test_health_and_cors(client):
+    res = client.get("/api/health", headers={"Origin": "https://result-desk.vercel.app"})
+    assert res.status_code == 200
+    assert res.json()["ok"] is True
+    assert res.headers.get("access-control-allow-origin") == "*"
 
 def test_upload_and_slips_api(client):
     # Upload Sample 2 and Sample 3 (Complete Regional Slip)

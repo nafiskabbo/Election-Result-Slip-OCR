@@ -4,12 +4,15 @@ import os
 from datetime import datetime, timezone
 from typing import Dict, Any, List, Optional
 
-DB_PATH = os.environ.get("BALLOT_DB_PATH", "ballot_ocr.db")
+from backend.config import DB_PATH as DEFAULT_DB_PATH
+
+DB_PATH = os.environ.get("BALLOT_DB_PATH", DEFAULT_DB_PATH)
 
 def get_db_connection() -> sqlite3.Connection:
     conn = sqlite3.connect(DB_PATH)
     conn.row_factory = sqlite3.Row
     conn.execute("PRAGMA foreign_keys = ON")
+    conn.execute("PRAGMA journal_mode = WAL")
     return conn
 
 def init_db():
