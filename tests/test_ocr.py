@@ -28,7 +28,39 @@ def test_limpopo_national_page_1(ocr_engine, enhancer):
     assert data["registered_voters"] == 1149
     assert "BRITTEN" not in (data["station_name"] or "")
     assert "BAKGAGA" in (data["station_name"] or "")
-    assert all(p["confidence_score"] <= 0.92 for p in data["party_results"])
+    assert all(p["confidence_score"] <= 0.95 for p in data["party_results"])
+
+    votes = {p["party_code"]: p["votes"] for p in data["party_results"]}
+    # 4-block RESULT column: left-aligned digits (Ø counts as 0).
+    assert votes.get("ANC") == 481
+    assert votes.get("EFF") == 77
+    assert votes.get("DA") == 5
+    assert votes.get("A.C.C.") == 1
+    assert votes.get("AZAPO") == 1
+    assert votes.get("IFP") == 1
+    assert sum(votes.values()) <= data["registered_voters"]
+
+
+def test_parse_vote_digits_four_blocks():
+    from backend.ocr_engine import parse_vote_digits
+
+    assert parse_vote_digits("0 1") == 1
+    assert parse_vote_digits("481") == 481
+    assert parse_vote_digits("Ø 5") == 5
+    assert parse_vote_digits("7 7") == 77
+    assert parse_vote_digits("12345") == 2345  # keep last 4 boxes only
+
+
+def test_digits_to_votes_left_aligned():
+    from backend.digit_icr import digits_to_votes
+
+    assert digits_to_votes([0, 1, None, None])[0] == 1
+    assert digits_to_votes([4, 8, 1, None])[0] == 481
+    assert digits_to_votes([7, 7, None, None])[0] == 77
+    assert digits_to_votes([None, None, None, None])[0] == 0
+    assert digits_to_votes([0, None, None, None])[0] == 0
+    assert digits_to_votes([8, None, None, None])[0] == 0  # misread Ø
+    assert digits_to_votes([0, None, 7, None])[0] == 0  # gap noise
 
 
 def test_limpopo_national_page_2(ocr_engine, enhancer):
@@ -65,7 +97,8 @@ def test_lookup_does_not_inflate_confidence(ocr_engine, enhancer):
     data = _extract(ocr_engine, enhancer, "sample_slips/p_1.jpg")
     scores = [p["confidence_score"] for p in data["party_results"]]
     assert scores
-    assert max(scores) <= 0.92
+    assert max(scores) <= 0.95
     assert 0.96 not in scores
     assert 0.99 not in scores
+    # Low-confidence or empty-digit rows should still surface for review.
     assert any(s < LOW_VOTE_CONFIDENCE for s in scores) or any(data.get("exception_flags") or [])

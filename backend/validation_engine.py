@@ -89,23 +89,72 @@ class ValidationEngine:
                 else:
                     message = "Reconciliation check pending final page totals."
 
-            # 3. Voter Turnout Ceiling
+            # 3. Voter Turnout Ceiling — votes cast and party totals vs registered
             elif code == "TURNOUT_CEILING":
-                if total_cast > 0:
-                    turnout_pct = (total_cast / float(reg_voters)) * 100.0
-                    max_pct = config.get("max_threshold_pct", 100.0)
-                    warn_pct = config.get("warning_threshold_pct", 90.0)
+                max_pct = config.get("max_threshold_pct", 100.0)
+                warn_pct = config.get("warning_threshold_pct", 90.0)
+                ceiling = reg_voters
 
-                    if turnout_pct > max_pct:
+                if sum_party_votes > ceiling:
+                    status = "fail"
+                    message = (
+                        f"Party vote sum ({sum_party_votes}) exceeds registered voters "
+                        f"({reg_voters})."
+                    )
+                elif total_cast > 0:
+                    turnout_pct = (total_cast / float(reg_voters)) * 100.0
+                    if turnout_pct > max_pct or total_cast > ceiling:
                         status = "fail"
-                        message = f"Voter turnout ({turnout_pct:.1f}%) exceeds 100% of registered voters ({total_cast} / {reg_voters})."
+                        message = (
+                            f"Voter turnout ({turnout_pct:.1f}%) exceeds 100% of registered "
+                            f"voters ({total_cast} / {reg_voters})."
+                        )
                     elif turnout_pct > warn_pct:
                         status = "warn"
-                        message = f"High voter turnout alert: {turnout_pct:.1f}% ({total_cast} of {reg_voters} voters)."
+                        message = (
+                            f"High voter turnout alert: {turnout_pct:.1f}% "
+                            f"({total_cast} of {reg_voters} voters)."
+                        )
                     else:
-                        message = f"Voter turnout ({turnout_pct:.1f}%) is within expected threshold ({total_cast} / {reg_voters})."
+                        message = (
+                            f"Voter turnout ({turnout_pct:.1f}%) is within expected threshold "
+                            f"({total_cast} / {reg_voters})."
+                        )
+                elif sum_party_votes > 0:
+                    turnout_pct = (sum_party_votes / float(reg_voters)) * 100.0
+                    if turnout_pct > warn_pct:
+                        status = "warn"
+                        message = (
+                            f"Party votes so far are {turnout_pct:.1f}% of registered voters "
+                            f"({sum_party_votes} / {reg_voters}); awaiting final page totals."
+                        )
+                    else:
+                        message = (
+                            f"Party votes ({sum_party_votes}) are within registered voters "
+                            f"({reg_voters})."
+                        )
                 else:
                     message = f"Registered voters: {reg_voters}."
+
+            # 3b. Explicit votes-vs-registered ceiling (party sum and cast)
+            elif code == "VOTES_WITHIN_REGISTERED":
+                over_party = sum_party_votes > reg_voters
+                over_cast = total_cast > reg_voters if total_cast > 0 else False
+                if over_party or over_cast:
+                    status = "fail" if severity == "error" else "warn"
+                    parts = []
+                    if over_party:
+                        parts.append(f"party sum {sum_party_votes}")
+                    if over_cast:
+                        parts.append(f"votes cast {total_cast}")
+                    message = (
+                        f"{' and '.join(parts)} exceed registered voters ({reg_voters})."
+                    )
+                else:
+                    message = (
+                        f"Votes within registered voters: parties={sum_party_votes}, "
+                        f"cast={total_cast}, registered={reg_voters}."
+                    )
 
             # 4. Complete Multi-Page Set Requirement
             elif code == "ALL_PAGES_PRESENT":

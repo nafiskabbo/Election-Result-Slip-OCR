@@ -36,11 +36,21 @@ insert into validation_rules (
         'rule_turnout_ceiling',
         'TURNOUT_CEILING',
         'Voter Turnout Ceiling Check',
-        'Validates that Total Votes Cast does not exceed Registered Voters (flags error if >100%, warning if unusually high >90%).',
+        'Validates that Total Votes Cast and the party-vote sum do not exceed Registered Voters (flags error if >100%, warning if unusually high >90%).',
         'threshold',
         true,
         'error',
         '{"warning_threshold_pct": 90.0, "max_threshold_pct": 100.0}'::jsonb
+    ),
+    (
+        'rule_votes_within_registered',
+        'VOTES_WITHIN_REGISTERED',
+        'Votes Within Registered Voters',
+        'Fails when the sum of party votes or Total Votes Cast is greater than Registered Voters on the slip.',
+        'threshold',
+        true,
+        'error',
+        '{}'::jsonb
     ),
     (
         'rule_all_pages_present',
@@ -82,4 +92,11 @@ insert into validation_rules (
         'warning',
         '{}'::jsonb
     )
-on conflict (id) do nothing;
+on conflict (id) do update set
+    rule_code = excluded.rule_code,
+    name = excluded.name,
+    description = excluded.description,
+    rule_type = excluded.rule_type,
+    is_active = excluded.is_active,
+    severity = excluded.severity,
+    config_json = excluded.config_json;

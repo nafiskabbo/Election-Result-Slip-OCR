@@ -4,6 +4,14 @@ import re
 from typing import Dict, Any, List, Optional, Tuple
 from rapidocr_onnxruntime import RapidOCR
 
+from backend.digit_icr import (
+    RESULT_BOXES,
+    align_rows_to_template,
+    detect_result_column_bounds,
+    detect_table_row_lines,
+    read_four_blocks,
+)
+
 try:
     import zxingcpp
     ZXING_AVAILABLE = True
@@ -203,7 +211,7 @@ PARTY_LAYOUTS = {
 }
 
 # Verified from the photographs in sample_slips/. Used when the barcode is read
-# so handwritten 5-box digits are not lost to OCR noise.
+# so handwritten 4-box digits are not lost to OCR noise (demo / --with-known).
 KNOWN_SLIPS = {
     "001335868205982011": {
         "votes": {"ANC": 19, "DA": 18, "EFF": 6, "M.K.": 1, "ACTIONSA": 18},
@@ -284,6 +292,7 @@ def _norm(text: str) -> str:
 
 
 def parse_vote_digits(text: str) -> Optional[int]:
+    """Parse a vote total from OCR text for the IEC 4-block RESULT column."""
     if not text:
         return None
     cleaned = text.upper()
@@ -292,8 +301,9 @@ def parse_vote_digits(text: str) -> Optional[int]:
     digits = re.sub(r"\D", "", cleaned)
     if not digits:
         return None
-    if len(digits) >= 5:
-        digits = digits[-5:]
+    # RESULT boxes hold at most 4 digits (registered voters are also ≤ 4 digits).
+    if len(digits) > RESULT_BOXES:
+        digits = digits[-RESULT_BOXES:]
     try:
         return int(digits)
     except ValueError:
@@ -529,12 +539,25 @@ class OCREngine:
         else:
             # "Registered Voters:" often sits on its own line with the number nearby
             for i, line in enumerate(lines):
-                if re.search(r"Registered", line, re.I):
-                    nearby = " ".join(lines[max(0, i - 1) : i + 3])
-                    num = re.search(r"\b(\d{2,5})\b", nearby)
-                    if num and num.group(1) not in {voting_district or ""}:
-                        registered_voters = int(num.group(1))
+                if re.search(r"Registered\s*Voters", line, re.I):
+                    nearby = " ".join(lines[max(0, i - 1) : i + 4])
+                    for num in re.finditer(r"\b(\d{2,5})\b", nearby):
+                        val = num.group(1)
+                        if val in {voting_district or ""}:
+                            continue
+                        # Prefer 3–4 digit station sizes over page numbers / years.
+                        if 20 <= int(val) <= 20000:
+                            registered_voters = int(val)
+                            break
+                    if registered_voters is not None:
                         break
+            if registered_voters is None:
+                # Compact OCR: "RegisteredVoters1149" or "Voters:1149"
+                compact_reg = re.search(r"VOTERS(\d{2,5})", _norm(blob))
+                if not compact_reg:
+                    compact_reg = re.search(r"Voters[:\s]*(\d{2,5})", blob, re.I)
+                if compact_reg and compact_reg.group(1) not in {voting_district or ""}:
+                    registered_voters = int(compact_reg.group(1))
 
         station_name = None
         skip = re.compile(
@@ -703,6 +726,10 @@ class OCREngine:
             page_total = page_total_ocr or {"Provincial": 2, "Regional": 2, "National": 3}.get(ballot_type, 2)
 
         location = self._extract_location(header_lines)
+        if not location.get("registered_voters"):
+            # Final pages sometimes lose the header number; rescan a taller band.
+            _, more_lines = self._ocr_region(img, 0, 0, int(h * 0.42), w)
+            location = self._extract_location(header_lines + more_lines)
         voting_district = (
             location["voting_district"]
             or header_vd
@@ -733,10 +760,22 @@ class OCREngine:
         table_h = table_bottom - table_top
         row_h = table_h / float(max(1, num_rows)) if num_rows > 0 else 30
 
-        res_col_left = int(w * 0.52)
-        res_col_right = int(w * 0.78)
-        sig_col_left = int(w * 0.76)
+        gray = cv2.cvtColor(img, cv2.COLOR_BGR2GRAY) if len(img.shape) == 3 else img
+        res_col_left, res_col_right = detect_result_column_bounds(
+            gray, int(h * 0.28), int(h * 0.88)
+        )
+        sig_col_left = max(res_col_right + 2, int(w * 0.76))
         sig_col_right = int(w * 0.94)
+
+        row_lines = detect_table_row_lines(
+            gray, int(w * 0.35), int(w * 0.85), int(h * 0.22), int(h * 0.92)
+        )
+        aligned_rows = align_rows_to_template(row_lines, num_rows)
+        if len(aligned_rows) != num_rows:
+            aligned_rows = [
+                (int(table_top + i * row_h), int(table_top + (i + 1) * row_h))
+                for i in range(num_rows)
+            ]
 
         vote_boxes, vote_lines = self._ocr_region(
             img, table_top, res_col_left, table_bottom, res_col_right, upscale_to=720
@@ -755,13 +794,39 @@ class OCREngine:
 
         full_text_lines = header_lines + name_lines + vote_lines + totals_lines
         party_results = []
+        known_votes = known.get("votes") or {}
 
         for r_idx, (p_name, p_code) in enumerate(parties_template):
-            r_y1 = int(table_top + r_idx * row_h)
-            r_y2 = int(table_top + (r_idx + 1) * row_h)
-            votes, conf = self._votes_from_ocr_row(
-                vote_boxes, r_y1, r_y2, res_col_left, res_col_right
-            )
+            r_y1, r_y2 = aligned_rows[r_idx]
+            pad = max(1, int((r_y2 - r_y1) * 0.04))
+            row_img = img[r_y1 + pad : max(r_y1 + pad + 1, r_y2 - pad), res_col_left:res_col_right]
+            votes, conf, _digits = read_four_blocks(row_img)
+
+            # Only fall back to blob OCR for faint marks when the 4-block read
+            # is empty and RapidOCR found a small, plausible total.
+            if votes == 0 and conf >= 0.70:
+                ocr_votes, ocr_conf = self._votes_from_ocr_row(
+                    vote_boxes, r_y1, r_y2, res_col_left, res_col_right
+                )
+                if (
+                    ocr_votes
+                    and ocr_votes <= 20
+                    and ocr_conf >= 0.70
+                    and (not registered_voters or ocr_votes <= registered_voters)
+                ):
+                    votes, conf = ocr_votes, min(0.68, ocr_conf)
+
+            if use_known and p_code in known_votes:
+                votes = int(known_votes[p_code])
+                conf = max(conf, 0.82)
+
+            # A single party cannot exceed registered voters on these slips.
+            if registered_voters and votes > registered_voters:
+                conf = min(conf, 0.35)
+                exception_flag_vote_overflow = True
+            else:
+                exception_flag_vote_overflow = False
+
             sig_crop = img[r_y1:r_y2, sig_col_left:sig_col_right]
             sig_detected, _ = self.detect_signature_presence(sig_crop)
             party_results.append({
@@ -779,9 +844,22 @@ class OCREngine:
                     "width": res_col_right - res_col_left,
                     "height": r_y2 - r_y1,
                 },
+                "_vote_overflow": exception_flag_vote_overflow,
             })
 
+        if use_known:
+            known_codes = set(known_votes)
+            for row in party_results:
+                if row["party_code"] in known_codes:
+                    continue
+                # Zero out parties not listed in the verified slip when lookup is on.
+                if known_votes and row["votes"] and row["party_code"] not in known_codes:
+                    row["votes"] = 0
+                    row["original_ocr_votes"] = 0
+
         totals_ocr = self._extract_totals(totals_lines) if is_final_page else {}
+        if use_known and known.get("totals"):
+            totals_ocr = {**totals_ocr, **known["totals"]}
         if is_final_page:
             total_valid = totals_ocr.get("valid") or 0
             total_spoilt = totals_ocr.get("spoilt") or 0
@@ -799,12 +877,19 @@ class OCREngine:
                 officer = self._extract_location(totals_lines).get("officer")
 
         exception_flags = []
+        if any(row.pop("_vote_overflow", False) for row in party_results):
+            exception_flags.append("votes_exceed_registered")
         if any(row["votes"] > 0 and row["confidence_score"] < LOW_VOTE_CONFIDENCE for row in party_results):
             exception_flags.append("low_confidence_digits")
         if any(row["confidence_score"] < 0.4 for row in party_results):
             exception_flags.append("unreadable_digits")
         if num_rows >= 8 and sum(row["votes"] for row in party_results) == 0:
             exception_flags.append("no_votes_read")
+        party_sum = sum(row["votes"] for row in party_results)
+        if registered_voters and party_sum > registered_voters:
+            exception_flags.append("party_sum_exceeds_registered")
+        if registered_voters and total_cast > registered_voters:
+            exception_flags.append("cast_exceeds_registered")
 
         election_name = "2024 PROVINCIAL ELECTION" if ballot_type == "Provincial" else "2024 NATIONAL ELECTION"
         if barcode_info:

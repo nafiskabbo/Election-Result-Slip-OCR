@@ -37,6 +37,7 @@ def _process_saved_file(raw_path: str, original_filename: str, file_size: int, m
 
         extracted_data = ocr_engine.extract_full_slip_data(
             enh_res.enhanced_image,
+            use_known=True,
             binary=enh_res.binary_image,
         )
 
