@@ -48,7 +48,7 @@ class GroupingEngine:
             )
             existing_slip = cursor.fetchone()
 
-        exception_flags = []
+        exception_flags = list(extracted_data.get("exception_flags") or [])
         page_id = f"page_{uuid.uuid4().hex[:12]}"
 
         if existing_slip:

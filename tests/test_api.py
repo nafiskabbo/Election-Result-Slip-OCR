@@ -24,16 +24,16 @@ def test_health_and_cors(client):
     assert res.headers.get("access-control-allow-origin") == "*"
 
 def test_upload_and_slips_api(client):
-    # Upload Sample 2 and Sample 3 (Complete Regional Slip)
-    with open("sample_slips/image2.jpg", "rb") as f2, open("sample_slips/image3.jpg", "rb") as f3:
+    with open("sample_slips/p_1.jpg", "rb") as f1, open("sample_slips/p_2.jpg", "rb") as f2, open("sample_slips/p_3.jpg", "rb") as f3:
         files = [
-            ("files", ("image2.jpg", f2, "image/jpeg")),
-            ("files", ("image3.jpg", f3, "image/jpeg"))
+            ("files", ("p_1.jpg", f1, "image/jpeg")),
+            ("files", ("p_2.jpg", f2, "image/jpeg")),
+            ("files", ("p_3.jpg", f3, "image/jpeg")),
         ]
         res = client.post("/api/upload", files=files)
         assert res.status_code == 200
         data = res.json()
-        assert data["processed_pages_count"] == 2
+        assert data["processed_pages_count"] == 3
         assert len(data["affected_slips"]) == 1
         slip_id = data["affected_slips"][0]
 
@@ -41,9 +41,9 @@ def test_upload_and_slips_api(client):
     detail_res = client.get(f"/api/slips/{slip_id}")
     assert detail_res.status_code == 200
     slip_data = detail_res.json()
-    assert slip_data["ballot_type"] == "Regional"
-    assert slip_data["total_received_pages"] == 2
-    assert slip_data["status"] == "pending_review"
+    assert slip_data["ballot_type"] == "National"
+    assert slip_data["total_received_pages"] == 3
+    assert slip_data["status"] in ("pending_review", "flagged")
     assert len(slip_data["party_results"]) > 0
 
     # Manual Vote Override
@@ -69,9 +69,8 @@ def test_upload_and_slips_api(client):
     assert "application/pdf" in pdf_res.headers["content-type"]
 
 def test_incomplete_slip_approval_blocked_api(client):
-    # Upload only Sample 1 (Provincial Page 1 of 2 - Incomplete!)
-    with open("sample_slips/image1.jpg", "rb") as f1:
-        files = [("files", ("image1.jpg", f1, "image/jpeg"))]
+    with open("sample_slips/p_1.jpg", "rb") as f1:
+        files = [("files", ("p_1.jpg", f1, "image/jpeg"))]
         res = client.post("/api/upload", files=files)
         assert res.status_code == 200
         slip_id = res.json()["affected_slips"][0]

@@ -112,11 +112,29 @@ Open **http://localhost:5173** for the desk (Vite proxies `/api` to port 8000), 
 ### Running Tests
 
 ```bash
-source venv/bin/activate
-python -m pytest tests/ -v
+./run.sh test
 ```
 
-Pytest covers enhancement, OCR, grouping, validation, audit, and the API. Run it after a `pip install`.
+That command:
+
+1. Runs OCR on **every photo in `sample_slips/`** and scores it against `tests/fixtures/sample_gold.json` (raw OCR, no hardcoded lookup).
+2. Then runs pytest (enhancement, OCR identity, grouping, validation, audit, API).
+
+Accuracy only:
+
+```bash
+./run.sh accuracy
+./run.sh accuracy --with-known
+./run.sh accuracy --fail-under 95
+```
+
+Or, with the venv already created:
+
+```bash
+source venv/bin/activate
+python -m backend.accuracy_check
+python -m pytest tests/ -v
+```
 
 ## API Documentation
 
@@ -150,21 +168,15 @@ See [`API_SPECIFICATION.md`](docs/API_SPECIFICATION.md) for the full REST API re
 
 ## Sample Data
 
-High-quality photographed slips live in `sample_slips/`. Debug crops were removed.
+Photographed slips live in `sample_slips/`. Gold labels for the accuracy command are in `tests/fixtures/sample_gold.json`.
 
-| Image        | Ballot Type | Page   | Station                          |
-|--------------|-------------|--------|----------------------------------|
-| `image1.jpg` | Provincial  | 1 of 2 | Britten Station Shop             |
-| `image2.jpg` | Regional    | 1 of 2 | Britten Station Shop             |
-| `image3.jpg` | Regional    | 2 of 2 | Groups with image2               |
-| `image4.jpg` | National    | 3 of 3 | Britten Station Shop             |
-| `i_1.jpg`    | National    | 1 of 3 | Bakgaga Ba-Maake Traditional Aut |
-| `i_2.jpg`    | National    | 2 of 3 | Same Limpopo station             |
-| `i_3.jpg`    | National    | 3 of 3 | Completes the national set       |
-| `i_4.jpg`    | Regional    | 1 of 3 | Same Limpopo station             |
-| `i_5.jpg`    | Regional    | 2 of 3 | Missing page 3                   |
-
-Contest photographs 1–4 become **three slips**, not four: regional pages 1 and 2 are one result. Provincial is missing page 2. National is missing pages 1 and 2. That is grouping working, not a lost file.
+| Image | Ballot | Page | Station |
+|-------|--------|------|---------|
+| `p_1.jpg`–`p_3.jpg` | National | 1–3 of 3 | Bakgaga Ba-Maake Traditional Aut |
+| `p_4.jpg`–`p_6.jpg` | Regional | 1–3 of 3 | Same Limpopo station |
+| `p_7.jpg`–`p_9.jpg` | Provincial | 1–3 of 3 | Same Limpopo station |
+| `page_1_provincial_ballot.jpeg` | Provincial | 1 of 2 | Sosebenza Primary School (Cape Town) |
+| `national_election.jpeg`, `nation_cape_town.jpeg` | Worksheet | n/a | Different layout; scored separately |
 
 ## Render + Vercel
 
@@ -196,8 +208,8 @@ Local check of the split: `VITE_API_URL=http://127.0.0.1:8000 npm run build --pr
 
 ## Usage Workflow
 
-1. **Capture** — Drop result slip photographs, or load one of the sample packs
-2. **Inbox** — Four contest photos become three slips because regional pages 1 and 2 belong together
+1. **Capture** — Photograph a result slip or upload scanner/gallery files
+2. **Inbox** — Pages that share a barcode, VD, and ballot type group into one slip
 3. **Review** — Check the photograph against the extracted counts
 4. **Correct** — Override a misread; the change is written to the audit log
 5. **Approve** — Blocked until every page is present and critical checks pass

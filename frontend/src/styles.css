@@ -441,9 +441,9 @@ table.data tr.national { box-shadow: inset 4px 0 0 var(--national); }
 }
 .camera-frame {
   position: relative;
-  width: min(78%, 280px);
+  width: min(86%, 340px);
   aspect-ratio: 210 / 297;
-  box-shadow: 0 0 0 9999px rgba(0, 0, 0, 0.35);
+  box-shadow: 0 0 0 9999px rgba(0, 0, 0, 0.55);
 }
 .camera-corner {
   position: absolute;
@@ -455,6 +455,12 @@ table.data tr.national { box-shadow: inset 4px 0 0 var(--national); }
 .camera-corner-tr { top: -2px; right: -2px; border-left: 0; border-bottom: 0; }
 .camera-corner-bl { bottom: -2px; left: -2px; border-right: 0; border-top: 0; }
 .camera-corner-br { bottom: -2px; right: -2px; border-left: 0; border-top: 0; }
+.camera-guide {
+  margin: 0.7rem 0 0;
+  font-size: 0.82rem;
+  color: #e8c37a;
+  text-shadow: 0 1px 3px rgba(0, 0, 0, 0.85);
+}
 .camera-status {
   position: absolute;
   top: 0.7rem;
@@ -563,24 +569,6 @@ table.data tr.national { box-shadow: inset 4px 0 0 var(--national); }
   font-size: 0.8rem;
 }
 
-.packs {
-  display: grid;
-  gap: 0;
-  border: 1px solid var(--rule);
-  background: #fff;
-  margin-top: 1.2rem;
-}
-.pack {
-  display: grid;
-  grid-template-columns: 1fr auto;
-  gap: 0.75rem;
-  padding: 0.85rem 1rem;
-  border-bottom: 1px solid var(--rule);
-  align-items: center;
-}
-.pack:last-child { border-bottom: 0; }
-.pack h3 { margin: 0; font-size: 0.98rem; }
-.pack p { margin: 0; color: var(--muted); max-width: 40rem; }
 .progress {
   margin-top: 1rem;
   padding: 0.8rem 1rem;
@@ -670,6 +658,7 @@ table.data tr.national { box-shadow: inset 4px 0 0 var(--national); }
 .banner.bad { border-color: var(--fail); background: #fdf2f0; }
 .banner.good { border-color: var(--pass); background: #f1f7f3; }
 .banner b { display: block; }
+.banner .btn { margin-top: 0.45rem; align-self: flex-start; }
 .votes-wrap { max-height: 280px; }
 
 .votes input,
@@ -683,7 +672,12 @@ table.data tr.national { box-shadow: inset 4px 0 0 var(--national); }
   font-size: 16px;
   border-radius: 0;
 }
+.banner.warn { border-color: var(--warn); background: #fbf6ea; }
+.votes tr.needs-check td { background: #fdf6e8; }
 .conf { font-variant-numeric: tabular-nums; color: var(--muted); }
+.conf.low { color: var(--fail); font-weight: 600; }
+.conf.mid { color: var(--warn); }
+.conf.high { color: var(--pass); }
 
 .recon {
   border: 1px solid var(--rule);
@@ -928,7 +922,7 @@ code {
     height: auto;
   }
   .camera-frame {
-    width: min(82vw, 320px);
+    width: min(88vw, 360px);
   }
   .camera-toolbar {
     padding-bottom: calc(0.9rem + var(--safe-bottom));
@@ -970,11 +964,6 @@ code {
     right: max(0.75rem, var(--safe-right));
     bottom: calc(var(--mobile-nav) + 0.5rem);
     max-width: none;
-  }
-
-  .pack {
-    grid-template-columns: 1fr auto;
-    gap: 0.5rem;
   }
 }
 

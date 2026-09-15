@@ -4,7 +4,6 @@ import CameraCapture, { openRearCamera } from "./CameraCapture.jsx";
 import InfoTip from "./InfoTip.jsx";
 
 export default function Capture({ busy, setBusy, onDone, notify, onCameraActiveChange }) {
-  const [packs, setPacks] = useState([]);
   const [over, setOver] = useState(false);
   const [note, setNote] = useState("");
   const [cameraOpen, setCameraOpen] = useState(false);
@@ -16,12 +15,6 @@ export default function Capture({ busy, setBusy, onDone, notify, onCameraActiveC
   streamRef.current = liveStream;
   const galleryInputRef = useRef(null);
   const cameraInputRef = useRef(null);
-
-  useEffect(() => {
-    api.samplePacks()
-      .then((list) => setPacks((list || []).filter((pack) => pack.id !== "contest")))
-      .catch((err) => notify(err.message, "fail"));
-  }, []);
 
   useEffect(() => () => {
     pendingRef.current.forEach((item) => URL.revokeObjectURL(item.preview));
@@ -99,21 +92,6 @@ export default function Capture({ busy, setBusy, onDone, notify, onCameraActiveC
     }
   };
 
-  const runPack = async (packId) => {
-    setBusy(true);
-    setNote("Running sample pack…");
-    try {
-      const data = await api.loadPack(packId);
-      notify(`${data.processed_pages_count} pages became ${data.affected_slips.length} slip${data.affected_slips.length === 1 ? "" : "s"}`, "pass");
-      await onDone();
-    } catch (err) {
-      notify(err.message, "fail");
-    } finally {
-      setBusy(false);
-      setNote("");
-    }
-  };
-
   return (
     <section className={cameraOpen && liveStream ? "capture-camera" : ""}>
       {!(cameraOpen && liveStream) && (
@@ -121,7 +99,7 @@ export default function Capture({ busy, setBusy, onDone, notify, onCameraActiveC
           <div className="page-title-row">
             <h1>Capture</h1>
             <InfoTip label="Capture help">
-              <p>Photograph each page so all four slip edges are visible, or upload scanner/gallery files.</p>
+              <p>Photograph each page so the slip fills the box. Everything outside the box is dropped.</p>
               <p>JPEG, PNG, and PDF are accepted. Multi-page slips can be captured one page at a time, then uploaded together.</p>
             </InfoTip>
           </div>
@@ -208,21 +186,6 @@ export default function Capture({ busy, setBusy, onDone, notify, onCameraActiveC
       )}
 
       {busy && <div className="progress">{note || "Working…"}</div>}
-
-      {!(cameraOpen && liveStream) && packs.length > 0 && (
-        <div className="packs">
-          {packs.map((pack) => (
-            <article className="pack" key={pack.id}>
-              <div>
-                <h3>{pack.title}</h3>
-              </div>
-              <button className="btn ghost" disabled={busy || !pack.available} onClick={() => runPack(pack.id)}>
-                Load {pack.files.length}
-              </button>
-            </article>
-          ))}
-        </div>
-      )}
     </section>
   );
 }

@@ -35,7 +35,10 @@ def _process_saved_file(raw_path: str, original_filename: str, file_size: int, m
         enh_path = f"storage/enhanced/{enh_filename}"
         thumb_path = f"storage/thumbnails/thumb_{enh_filename}"
 
-        extracted_data = ocr_engine.extract_full_slip_data(cv_img)
+        extracted_data = ocr_engine.extract_full_slip_data(
+            enh_res.enhanced_image,
+            binary=enh_res.binary_image,
+        )
 
         current_user_id = ACTIVE_USER_STATE["id"]
         slip_id, page_id, summary = grouping_engine.process_extracted_page(

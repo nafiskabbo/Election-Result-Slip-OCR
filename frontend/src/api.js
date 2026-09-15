@@ -72,8 +72,6 @@ export const api = {
     files.forEach((file) => form.append("files", file));
     return request("/api/upload", { method: "POST", body: form });
   },
-  samplePacks: () => request("/api/upload/samples"),
-  loadPack: (packId) => request(`/api/upload/samples/${packId}`, { method: "POST" }),
   rules: () => request("/api/rules"),
   updateRule: (code, payload) => request(`/api/rules/${code}`, {
     method: "PATCH",

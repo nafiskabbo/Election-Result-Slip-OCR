@@ -31,11 +31,9 @@ In the top right of the navigation header, select your active persona:
 1. Navigate to the **"📤 Batch Upload & OCR"** tab.
 2. Drag and drop single or multiple photographed slips (JPG, PNG) or multi-page PDF files into the dropzone.
 3. **Automated Processing**:
-   - The computer vision pipeline automatically detects paper boundaries, warps perspective to flat rectangular alignment, deskews orientation, normalizes contrast, and removes ambient shadows in **$< 0.2$ seconds per page**.
+   - The computer vision pipeline automatically detects paper boundaries, warps perspective to flat rectangular alignment, deskews orientation, normalizes contrast, and removes ambient shadows.
    - Raw uploaded files are stored safely in `storage/raw/` (never overwritten).
    - High-resolution enhanced images are stored in `storage/enhanced/`.
-4. **Quick Sample Demo**:
-   - Click **"⚡ Load Official Samples"** to automatically process the 4 supplied official 2024 contest sample slips in a single batch.
 
 ---
 

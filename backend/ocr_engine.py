@@ -10,6 +10,9 @@ try:
 except ImportError:
     ZXING_AVAILABLE = False
 
+# Rows below this must be confirmed in Review before approval.
+LOW_VOTE_CONFIDENCE = 0.72
+
 PROVINCES = [
     "Eastern Cape", "Free State", "Gauteng", "KwaZulu-Natal", "Limpopo",
     "Mpumalanga", "Northern Cape", "North West", "Western Cape",
@@ -331,19 +334,31 @@ class OCREngine:
             }
         return None
 
-    def read_zxing_barcode(self, img: np.ndarray) -> Optional[str]:
-        if not ZXING_AVAILABLE or img is None:
+    def _zxing_digits(self, img: np.ndarray) -> Optional[str]:
+        if not ZXING_AVAILABLE or img is None or img.size == 0:
             return None
         try:
             gray = cv2.cvtColor(img, cv2.COLOR_BGR2GRAY) if len(img.shape) == 3 else img
-            results = zxingcpp.read_barcodes(gray)
-            for result in results or []:
-                text = getattr(result, "text", None) or str(result)
-                digits = re.sub(r"\D", "", text)
-                if len(digits) >= 18:
-                    return digits[:19] if len(digits) > 18 else digits
+            for candidate in (gray, cv2.bitwise_not(gray)):
+                results = zxingcpp.read_barcodes(candidate)
+                for result in results or []:
+                    text = getattr(result, "text", None) or str(result)
+                    digits = re.sub(r"\D", "", text)
+                    if len(digits) >= 18:
+                        return digits[:19] if len(digits) > 18 else digits
         except Exception:
             return None
+        return None
+
+    def read_zxing_barcode(self, img: np.ndarray) -> Optional[str]:
+        if img is None:
+            return None
+        h, w = img.shape[:2]
+        regions = [img, img[: max(8, int(h * 0.16)), :], img[int(h * 0.84) :, :]]
+        for region in regions:
+            digits = self._zxing_digits(region)
+            if digits:
+                return digits
         return None
 
     def detect_header_badge(self, img: np.ndarray) -> Optional[str]:
@@ -389,23 +404,62 @@ class OCREngine:
 
         return False, 0.90
 
-    def _run_ocr(self, img: np.ndarray) -> Tuple[List[Dict[str, Any]], List[str]]:
+    def _as_bgr(self, img: np.ndarray) -> np.ndarray:
+        if img is None or img.size == 0:
+            return img
+        if len(img.shape) == 2:
+            return cv2.cvtColor(img, cv2.COLOR_GRAY2BGR)
+        return img
+
+    def _run_ocr(
+        self,
+        img: np.ndarray,
+        max_side: int = 1600,
+        upscale_to: int = 0,
+    ) -> Tuple[List[Dict[str, Any]], List[str]]:
+        img = self._as_bgr(img)
         h, w = img.shape[:2]
         if min(h, w) < 8:
             return [], []
         work = img
-        longest = max(h, w)
-        if longest > 1600:
-            scale = 1600 / float(longest)
-            work = cv2.resize(img, (int(w * scale), int(h * scale)), interpolation=cv2.INTER_AREA)
+        if upscale_to and min(h, w) < upscale_to:
+            scale = upscale_to / float(min(h, w))
+            work = cv2.resize(img, (int(round(w * scale)), int(round(h * scale))), interpolation=cv2.INTER_CUBIC)
+        elif max(h, w) > max_side:
+            scale = max_side / float(max(h, w))
+            work = cv2.resize(img, (int(round(w * scale)), int(round(h * scale))), interpolation=cv2.INTER_AREA)
+        scale_x = w / float(work.shape[1])
+        scale_y = h / float(work.shape[0])
         ocr_results, _ = self.rapid_ocr(work)
         ocr_boxes = []
         full_text_lines = []
         if ocr_results:
             for box, text, score in ocr_results:
-                ocr_boxes.append({"box": box, "text": text, "score": float(score)})
+                mapped = [[float(p[0]) * scale_x, float(p[1]) * scale_y] for p in box]
+                ocr_boxes.append({"box": mapped, "text": text, "score": float(score)})
                 full_text_lines.append(text)
         return ocr_boxes, full_text_lines
+
+    def _ocr_region(
+        self,
+        img: np.ndarray,
+        y1: int,
+        x1: int,
+        y2: int,
+        x2: int,
+        upscale_to: int = 0,
+    ) -> Tuple[List[Dict[str, Any]], List[str]]:
+        h, w = img.shape[:2]
+        y1 = max(0, min(h, y1))
+        y2 = max(0, min(h, y2))
+        x1 = max(0, min(w, x1))
+        x2 = max(0, min(w, x2))
+        if y2 - y1 < 8 or x2 - x1 < 8:
+            return [], []
+        boxes, lines = self._run_ocr(img[y1:y2, x1:x2], upscale_to=upscale_to)
+        for item in boxes:
+            item["box"] = [[p[0] + x1, p[1] + y1] for p in item["box"]]
+        return boxes, lines
 
     def _page_from_text(self, lines: List[str]) -> Tuple[Optional[int], Optional[int]]:
         blob = " ".join(lines)
@@ -577,69 +631,58 @@ class OCREngine:
             if y1 <= cy <= y2 and x1 <= cx <= x2:
                 bits.append((cx, item["text"], item["score"]))
         if not bits:
-            return 0, 0.4
+            return 0, 0.58
         bits.sort()
         text = " ".join(t for _, t, _ in bits)
         votes = parse_vote_digits(text)
         conf = float(sum(s for _, _, s in bits) / len(bits))
         if votes is None:
-            return 0, max(0.35, conf * 0.5)
-        return votes, conf
+            return 0, max(0.28, min(0.45, conf * 0.5))
+        return votes, max(0.2, min(0.92, conf))
 
     def upright_image(self, img: np.ndarray) -> np.ndarray:
         from backend.image_enhancer import ImageEnhancer
         return ImageEnhancer().upright_orientation(img)
 
-    def extract_full_slip_data(self, img: np.ndarray) -> Dict[str, Any]:
+    def _barcode_from_ocr_lines(self, boxes: List[Dict[str, Any]], lines: List[str], header_vd: Optional[str]):
+        for item in boxes:
+            parsed = self.parse_barcode_reference(item["text"], header_vd)
+            if parsed:
+                return parsed
+        return self.parse_barcode_reference("".join(lines), header_vd)
+
+    def extract_full_slip_data(
+        self,
+        img: np.ndarray,
+        use_known: bool = False,
+        binary: Optional[np.ndarray] = None,
+    ) -> Dict[str, Any]:
         img = self.upright_image(img)
+        if binary is not None:
+            binary = self._as_bgr(binary)
         h, w = img.shape[:2]
 
-        ocr_boxes, full_text_lines = self._run_ocr(img)
+        zxing_digits = self.read_zxing_barcode(img)
+        header_boxes, header_lines = self._ocr_region(img, 0, 0, int(h * 0.32), w)
 
         header_vd = None
-        for text in full_text_lines:
+        for text in header_lines:
             vd_m = re.search(r"VD\s*(\d{8})", text, re.I)
             if vd_m:
                 header_vd = vd_m.group(1)
                 break
 
         barcode_info = None
-        zxing_digits = self.read_zxing_barcode(img)
         if zxing_digits:
             barcode_info = self.parse_barcode_reference(zxing_digits, header_vd)
 
         if not barcode_info:
-            for item in ocr_boxes:
-                parsed = self.parse_barcode_reference(item["text"], header_vd)
-                if parsed:
-                    barcode_info = parsed
-                    break
+            footer_boxes, footer_lines = self._ocr_region(img, int(h * 0.84), 0, h, w)
+            barcode_info = self._barcode_from_ocr_lines(
+                header_boxes + footer_boxes, header_lines + footer_lines, header_vd
+            )
 
-        if not barcode_info:
-            joined = "".join(full_text_lines)
-            barcode_info = self.parse_barcode_reference(joined, header_vd)
-
-        if not barcode_info:
-            top_strip = img[: int(h * 0.12), :]
-            top_res, _ = self.rapid_ocr(top_strip)
-            if top_res:
-                for _, text, _ in top_res:
-                    parsed = self.parse_barcode_reference(text, header_vd)
-                    if parsed:
-                        barcode_info = parsed
-                        break
-
-        if not barcode_info:
-            bot_strip = img[int(h * 0.85) :, :]
-            bot_res, _ = self.rapid_ocr(bot_strip)
-            if bot_res:
-                for _, text, _ in bot_res:
-                    parsed = self.parse_barcode_reference(text, header_vd)
-                    if parsed:
-                        barcode_info = parsed
-                        break
-
-        page_num_ocr, page_total_ocr = self._page_from_text(full_text_lines)
+        page_num_ocr, page_total_ocr = self._page_from_text(header_lines)
 
         if barcode_info:
             ballot_type = barcode_info["ballot_type"]
@@ -647,7 +690,7 @@ class OCREngine:
             page_total = page_total_ocr or barcode_info["page_total"]
         else:
             ballot_type = None
-            joined_upper = " ".join(full_text_lines).upper()
+            joined_upper = " ".join(header_lines).upper()
             if "PROVINCIAL" in joined_upper:
                 ballot_type = "Provincial"
             elif "REGIONAL" in joined_upper:
@@ -659,61 +702,68 @@ class OCREngine:
             page_num = page_num_ocr or 1
             page_total = page_total_ocr or {"Provincial": 2, "Regional": 2, "National": 3}.get(ballot_type, 2)
 
-        location = self._extract_location(full_text_lines)
-
+        location = self._extract_location(header_lines)
         voting_district = (
             location["voting_district"]
+            or header_vd
             or (barcode_info["voting_district"] if barcode_info else None)
         )
-        raw_barcode_val = barcode_info["raw_barcode"] if barcode_info else ""
-        known = KNOWN_SLIPS.get(raw_barcode_val, {})
+        raw_barcode_val = barcode_info["raw_barcode"] if barcode_info else (zxing_digits or "")
+        known = KNOWN_SLIPS.get(raw_barcode_val, {}) if use_known else {}
 
-        province = known.get("province") or location["province"]
-        municipality = known.get("municipality") or location["municipality"]
-        station_name = known.get("station") or location["station_name"]
-        registered_voters = known.get("registered_voters") or location["registered_voters"]
-        officer = known.get("officer") or location["officer"]
+        province = location["province"] or known.get("province")
+        municipality = location["municipality"] or known.get("municipality")
+        station_name = location["station_name"] or known.get("station")
+        registered_voters = location["registered_voters"] or known.get("registered_voters")
+        officer = location["officer"] or known.get("officer")
 
-        parties_template = self._choose_layout(ballot_type, page_num, full_text_lines)
+        layout_options = PARTY_LAYOUTS.get((ballot_type, page_num), [])
+        name_lines = header_lines
+        if len(layout_options) > 1:
+            _, name_lines = self._ocr_region(img, int(h * 0.28), int(w * 0.02), int(h * 0.86), int(w * 0.52))
+            name_lines = header_lines + name_lines
+        parties_template = self._choose_layout(ballot_type, page_num, name_lines)
         num_rows = len(parties_template)
 
         is_final_page = page_num == page_total
         table_top_ratio = 0.285
         table_bottom_ratio = 0.55 if (is_final_page and ballot_type in ["Regional", "National"] and num_rows <= 12) else 0.855
-
         table_top = int(h * table_top_ratio)
         table_bottom = int(h * table_bottom_ratio)
         table_h = table_bottom - table_top
         row_h = table_h / float(max(1, num_rows)) if num_rows > 0 else 30
 
-        res_col_left = int(w * 0.55)
-        res_col_right = int(w * 0.76)
+        res_col_left = int(w * 0.52)
+        res_col_right = int(w * 0.78)
         sig_col_left = int(w * 0.76)
         sig_col_right = int(w * 0.94)
 
-        known_votes = known.get("votes")
+        vote_boxes, vote_lines = self._ocr_region(
+            img, table_top, res_col_left, table_bottom, res_col_right, upscale_to=720
+        )
+        if binary is not None:
+            bin_boxes, bin_lines = self._ocr_region(
+                binary, table_top, res_col_left, table_bottom, res_col_right, upscale_to=720
+            )
+            vote_boxes = vote_boxes + bin_boxes
+            vote_lines = vote_lines + bin_lines
+
+        totals_lines = vote_lines
+        if is_final_page:
+            _, totals_crop_lines = self._ocr_region(img, int(h * 0.48), int(w * 0.28), int(h * 0.92), w)
+            totals_lines = header_lines + vote_lines + totals_crop_lines
+
+        full_text_lines = header_lines + name_lines + vote_lines + totals_lines
         party_results = []
 
         for r_idx, (p_name, p_code) in enumerate(parties_template):
             r_y1 = int(table_top + r_idx * row_h)
             r_y2 = int(table_top + (r_idx + 1) * row_h)
-
-            ocr_votes, ocr_conf = self._votes_from_ocr_row(
-                ocr_boxes, r_y1, r_y2, res_col_left, res_col_right
+            votes, conf = self._votes_from_ocr_row(
+                vote_boxes, r_y1, r_y2, res_col_left, res_col_right
             )
-
-            if known_votes is not None:
-                votes = int(known_votes.get(p_code, 0))
-                conf = 0.96 if votes > 0 else 0.99
-            else:
-                votes = ocr_votes
-                conf = ocr_conf if votes else 0.7
-
             sig_crop = img[r_y1:r_y2, sig_col_left:sig_col_right]
             sig_detected, _ = self.detect_signature_presence(sig_crop)
-            if known_votes is not None:
-                sig_detected = votes > 0
-
             party_results.append({
                 "row_index": r_idx,
                 "party_name": p_name,
@@ -731,34 +781,30 @@ class OCREngine:
                 },
             })
 
-        totals_ocr = self._extract_totals(full_text_lines) if is_final_page else {}
-        known_totals = known.get("totals") if is_final_page else None
-
-        if known_totals:
-            total_valid = known_totals["valid"]
-            total_spoilt = known_totals["spoilt"]
-            total_cast = known_totals["cast"]
-            special_votes = known_totals["special"]
-            section_24a_votes = known_totals["s24a"]
-        elif is_final_page:
+        totals_ocr = self._extract_totals(totals_lines) if is_final_page else {}
+        if is_final_page:
             total_valid = totals_ocr.get("valid") or 0
             total_spoilt = totals_ocr.get("spoilt") or 0
             total_cast = totals_ocr.get("cast") or 0
             special_votes = totals_ocr.get("special") or 0
             section_24a_votes = totals_ocr.get("s24a") or 0
         else:
-            total_valid = 0
-            total_spoilt = 0
-            total_cast = 0
-            special_votes = 0
-            section_24a_votes = 0
+            total_valid = total_spoilt = total_cast = special_votes = section_24a_votes = 0
 
         officer_sig_detected = False
         if is_final_page:
             sig_band = img[int(h * 0.78) : int(h * 0.92), int(w * 0.45) : int(w * 0.95)]
             officer_sig_detected, _ = self.detect_signature_presence(sig_band)
-            if known_totals:
-                officer_sig_detected = True
+            if not officer:
+                officer = self._extract_location(totals_lines).get("officer")
+
+        exception_flags = []
+        if any(row["votes"] > 0 and row["confidence_score"] < LOW_VOTE_CONFIDENCE for row in party_results):
+            exception_flags.append("low_confidence_digits")
+        if any(row["confidence_score"] < 0.4 for row in party_results):
+            exception_flags.append("unreadable_digits")
+        if num_rows >= 8 and sum(row["votes"] for row in party_results) == 0:
+            exception_flags.append("no_votes_read")
 
         election_name = "2024 PROVINCIAL ELECTION" if ballot_type == "Provincial" else "2024 NATIONAL ELECTION"
         if barcode_info:
@@ -789,4 +835,5 @@ class OCREngine:
             "section_24a_votes": section_24a_votes,
             "party_results": party_results,
             "full_ocr_lines": full_text_lines,
+            "exception_flags": exception_flags,
         }

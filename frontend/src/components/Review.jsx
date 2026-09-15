@@ -48,6 +48,18 @@ export default function Review({ slip, onReload, onInbox, notify }) {
   const turnout = active.registered_voters
     ? ((active.total_votes_cast / active.registered_voters) * 100).toFixed(1)
     : "0.0";
+  const needsCheck = (row) => {
+    if (row.is_overridden) return false;
+    const conf = row.confidence_score || 0;
+    return (row.votes > 0 && conf < 0.72) || conf < 0.4;
+  };
+  const unchecked = (active.party_results || []).filter(needsCheck);
+  const confClass = (row) => {
+    const conf = row.confidence_score || 0;
+    if (conf < 0.72) return "low";
+    if (conf < 0.9) return "mid";
+    return "high";
+  };
 
   const refresh = async () => {
     const next = await api.getSlip(active.id);
@@ -78,6 +90,15 @@ export default function Review({ slip, onReload, onInbox, notify }) {
   };
 
   const runPrompt = (config) => setPrompt(config);
+
+  const confirmLow = async () => {
+    for (const row of unchecked) {
+      await api.updateParty(active.id, row.id, row.votes, "Operator confirmed OCR count");
+    }
+    const next = await refresh();
+    notify(`Confirmed ${unchecked.length} count${unchecked.length === 1 ? "" : "s"}`);
+    return next;
+  };
 
   const approve = async () => {
     try {
@@ -177,6 +198,14 @@ export default function Review({ slip, onReload, onInbox, notify }) {
               </div>
             )}
 
+            {unchecked.length > 0 && (
+              <div className="banner warn">
+                <b>Check {unchecked.length} low-confidence count{unchecked.length === 1 ? "" : "s"}</b>
+                <span className="sub">Highlighted rows must be confirmed or edited before approval.</span>
+                <button type="button" className="btn ghost" onClick={confirmLow}>Confirm highlighted</button>
+              </div>
+            )}
+
             <div className="table-wrap votes-wrap">
               <table className="data votes">
                 <thead>
@@ -191,6 +220,7 @@ export default function Review({ slip, onReload, onInbox, notify }) {
                   {(active.party_results || []).map((row) => (
                     <tr
                       key={row.id}
+                      className={needsCheck(row) ? "needs-check" : ""}
                       onPointerEnter={() => {
                         try { setHighlight(JSON.parse(row.bbox_json || "{}")); } catch { setHighlight(null); }
                       }}
@@ -210,7 +240,7 @@ export default function Review({ slip, onReload, onInbox, notify }) {
                           }}
                         />
                       </td>
-                      <td className="num conf">{Math.round((row.confidence_score || 0) * 100)}</td>
+                      <td className={`num conf ${confClass(row)}`}>{Math.round((row.confidence_score || 0) * 100)}</td>
                       <td>{row.signature_detected ? "✓" : "—"}</td>
                     </tr>
                   ))}
@@ -276,8 +306,16 @@ export default function Review({ slip, onReload, onInbox, notify }) {
               <button
                 type="button"
                 className="btn pass"
-                disabled={!complete || active.has_errors}
-                title={!complete ? "Missing pages" : active.has_errors ? "Fix failed checks first" : "Approve"}
+                disabled={!complete || active.has_errors || unchecked.length > 0}
+                title={
+                  !complete
+                    ? "Missing pages"
+                    : active.has_errors
+                      ? "Fix failed checks first"
+                      : unchecked.length > 0
+                        ? "Confirm low-confidence counts first"
+                        : "Approve"
+                }
                 onClick={approve}
               >
                 Approve

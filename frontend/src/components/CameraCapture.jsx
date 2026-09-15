@@ -38,6 +38,31 @@ function blobToJpegFile(blob) {
   }
 }
 
+function cropVideoToFrame(video, frameEl) {
+  const vw = video.videoWidth;
+  const vh = video.videoHeight;
+  const videoRect = video.getBoundingClientRect();
+  const frameRect = frameEl.getBoundingClientRect();
+  if (!vw || !vh || !videoRect.width || !frameRect.width) return null;
+
+  const scale = Math.max(videoRect.width / vw, videoRect.height / vh);
+  const displayedW = vw * scale;
+  const displayedH = vh * scale;
+  const offsetX = (videoRect.width - displayedW) / 2;
+  const offsetY = (videoRect.height - displayedH) / 2;
+
+  const sx = (frameRect.left - videoRect.left - offsetX) / scale;
+  const sy = (frameRect.top - videoRect.top - offsetY) / scale;
+  const sw = frameRect.width / scale;
+  const sh = frameRect.height / scale;
+
+  const x = Math.max(0, Math.min(vw, sx));
+  const y = Math.max(0, Math.min(vh, sy));
+  const width = Math.max(1, Math.min(vw - x, sw));
+  const height = Math.max(1, Math.min(vh - y, sh));
+  return { x, y, width, height };
+}
+
 function canvasToJpegFile(canvas) {
   return new Promise((resolve, reject) => {
     if (canvas.toBlob) {
@@ -64,6 +89,7 @@ function canvasToJpegFile(canvas) {
 
 export default function CameraCapture({ stream, disabled, pageCount = 0, onCapture, onClose, onFallback }) {
   const videoRef = useRef(null);
+  const frameRef = useRef(null);
   const [ready, setReady] = useState(false);
   const [error, setError] = useState("");
   const [flash, setFlash] = useState(false);
@@ -116,11 +142,16 @@ export default function CameraCapture({ stream, disabled, pageCount = 0, onCaptu
       const w = video.videoWidth;
       const h = video.videoHeight;
       if (!w || !h) return null;
+      const crop = frameRef.current ? cropVideoToFrame(video, frameRef.current) : null;
+      const sx = crop ? crop.x : 0;
+      const sy = crop ? crop.y : 0;
+      const sw = crop ? crop.width : w;
+      const sh = crop ? crop.height : h;
       const canvas = document.createElement("canvas");
-      canvas.width = w;
-      canvas.height = h;
+      canvas.width = Math.round(sw);
+      canvas.height = Math.round(sh);
       const ctx = canvas.getContext("2d");
-      ctx.drawImage(video, 0, 0, w, h);
+      ctx.drawImage(video, sx, sy, sw, sh, 0, 0, canvas.width, canvas.height);
       return await canvasToJpegFile(canvas);
     } finally {
       capturingRef.current = false;
@@ -158,12 +189,13 @@ export default function CameraCapture({ stream, disabled, pageCount = 0, onCaptu
           playsInline
         />
         <div className={`camera-overlay ${flash ? "flash" : ""}`} aria-hidden="true">
-          <div className="camera-frame">
+          <div className="camera-frame" ref={frameRef}>
             <span className="camera-corner camera-corner-tl" />
             <span className="camera-corner camera-corner-tr" />
             <span className="camera-corner camera-corner-bl" />
             <span className="camera-corner camera-corner-br" />
           </div>
+          <p className="camera-guide">Only this box is saved</p>
         </div>
         <div className="camera-status">
           <span className={error ? "fail" : ""}>{status}</span>
@@ -186,7 +218,7 @@ export default function CameraCapture({ stream, disabled, pageCount = 0, onCaptu
 
         <div className="camera-side camera-side-right">
           <InfoTip label="Camera tips" align="end">
-            <p>Fit all four edges of the slip inside the brackets.</p>
+            <p>Fill the box with the slip. Everything outside the box is discarded.</p>
             <p>Hold steady, avoid glare, and capture each page before uploading.</p>
           </InfoTip>
           {onFallback && (

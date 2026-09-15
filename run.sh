@@ -3,8 +3,6 @@ set -euo pipefail
 
 cd "$(dirname "$0")"
 
-echo "Starting Result desk"
-
 pick_python() {
   local cmd ver
   for cmd in python3.12 python3.11 python3.13 python3; do
@@ -31,32 +29,95 @@ PY
   venv/bin/python -c "import fastapi, uvicorn, cv2" >/dev/null 2>&1
 }
 
-PY="$(pick_python)"
-if ! venv_ok; then
-  echo "Creating virtual environment with $PY..."
-  rm -rf venv
-  "$PY" -m venv venv
-  venv/bin/python -m pip install --upgrade pip
-  venv/bin/python -m pip install -r requirements.txt
-fi
-
-mkdir -p storage/raw storage/enhanced storage/thumbnails
-
-if command -v npm >/dev/null 2>&1; then
-  if [[ "${FORCE_FRONTEND_BUILD:-}" == "1" || ! -f frontend/dist/index.html ]]; then
-    echo "Building the React desk..."
-    (cd frontend && npm install && npm run build)
-  else
-    echo "Using existing frontend/dist (set FORCE_FRONTEND_BUILD=1 to rebuild)."
+ensure_venv() {
+  local PY
+  PY="$(pick_python)"
+  if ! venv_ok; then
+    echo "Creating virtual environment with $PY..."
+    rm -rf venv
+    "$PY" -m venv venv
+    venv/bin/python -m pip install --upgrade pip
+    venv/bin/python -m pip install -r requirements.txt
   fi
-else
-  echo "npm not found; serving API only. For the split setup, run: cd frontend && npm run dev"
+  mkdir -p storage/raw storage/enhanced storage/thumbnails
+}
+
+usage() {
+  cat <<'EOF'
+Usage: ./run.sh [command]
+
+Commands:
+  start       Start the API (default)
+  test        Accuracy-check every photo in sample_slips/, then run pytest
+  accuracy    Accuracy-check every photo in sample_slips/ (raw OCR, no lookup)
+  help        Show this help
+
+Examples:
+  ./run.sh
+  ./run.sh test
+  ./run.sh accuracy --with-known
+  ./run.sh accuracy --fail-under 95
+EOF
+}
+
+run_accuracy() {
+  echo "Checking OCR accuracy on sample_slips/..."
+  venv/bin/python -m backend.accuracy_check "$@"
+}
+
+run_tests() {
+  run_accuracy
+  echo
+  echo "Running pytest..."
+  venv/bin/python -m pytest tests/ -v
+}
+
+start_server() {
+  if command -v npm >/dev/null 2>&1; then
+    if [[ "${FORCE_FRONTEND_BUILD:-}" == "1" || ! -f frontend/dist/index.html ]]; then
+      echo "Building the React desk..."
+      (cd frontend && npm install && npm run build)
+    else
+      echo "Using existing frontend/dist (set FORCE_FRONTEND_BUILD=1 to rebuild)."
+    fi
+  else
+    echo "npm not found; serving API only. For the split setup, run: cd frontend && npm run dev"
+  fi
+
+  echo "Initializing database..."
+  venv/bin/python -c "from backend.database import init_db; init_db()"
+
+  PORT="${PORT:-8000}"
+  echo "API: http://127.0.0.1:${PORT}"
+  echo "Desk: same origin after this build, or http://127.0.0.1:5173 via npm run dev"
+  exec venv/bin/python -m uvicorn backend.main:app --host 0.0.0.0 --port "$PORT" --reload
+}
+
+cmd="${1:-start}"
+if [[ $# -gt 0 ]]; then
+  shift
 fi
 
-echo "Initializing database..."
-venv/bin/python -c "from backend.database import init_db; init_db()"
-
-PORT="${PORT:-8000}"
-echo "API: http://127.0.0.1:${PORT}"
-echo "Desk: same origin after this build, or http://127.0.0.1:5173 via npm run dev"
-exec venv/bin/python -m uvicorn backend.main:app --host 0.0.0.0 --port "$PORT" --reload
+case "$cmd" in
+  start)
+    echo "Starting Result desk"
+    ensure_venv
+    start_server
+    ;;
+  test)
+    ensure_venv
+    run_tests "$@"
+    ;;
+  accuracy)
+    ensure_venv
+    run_accuracy "$@"
+    ;;
+  help|-h|--help)
+    usage
+    ;;
+  *)
+    echo "Unknown command: $cmd" >&2
+    usage >&2
+    exit 1
+    ;;
+esac

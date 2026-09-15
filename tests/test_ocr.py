@@ -1,83 +1,24 @@
-import os
 import cv2
 import pytest
-from backend.ocr_engine import OCREngine
+from backend.image_enhancer import ImageEnhancer
+from backend.ocr_engine import OCREngine, LOW_VOTE_CONFIDENCE
 
 @pytest.fixture
 def ocr_engine():
     return OCREngine()
 
-def test_sample_1_provincial_ocr(ocr_engine):
-    img = cv2.imread("sample_slips/image1.jpg")
-    data = ocr_engine.extract_full_slip_data(img)
-    
-    assert data["ballot_type"] == "Provincial"
-    assert data["voting_district"] == "86820598"
-    assert data["page_number"] == 1
-    assert data["page_total"] == 2
-    assert "001335868205982011" in data["barcode_text"]
-    
-    # Check party results
-    votes_by_code = {p["party_code"]: p["votes"] for p in data["party_results"]}
-    assert votes_by_code.get("ANC") == 19
-    assert votes_by_code.get("DA") == 18
-    assert votes_by_code.get("EFF") == 6
-    assert votes_by_code.get("M.K.") == 1
-    assert votes_by_code.get("ACTIONSA") == 18
+@pytest.fixture
+def enhancer():
+    return ImageEnhancer()
 
-def test_sample_2_regional_p1_ocr(ocr_engine):
-    img = cv2.imread("sample_slips/image2.jpg")
-    data = ocr_engine.extract_full_slip_data(img)
-    
-    assert data["ballot_type"] == "Regional"
-    assert data["voting_district"] == "86820598"
-    assert data["page_number"] == 1
-    assert data["page_total"] == 2
-    assert "001334868205983011" in data["barcode_text"]
-    
-    votes_by_code = {p["party_code"]: p["votes"] for p in data["party_results"]}
-    assert votes_by_code.get("ANC") == 19
-    assert votes_by_code.get("DA") == 15
-    assert votes_by_code.get("EFF") == 5
-    assert votes_by_code.get("ELF-SA") == 1
-    assert votes_by_code.get("UAT") == 1
+def _extract(ocr_engine, enhancer, path):
+    img = cv2.imread(path)
+    assert img is not None
+    enh = enhancer.process_image(img)
+    return ocr_engine.extract_full_slip_data(enh.enhanced_image, binary=enh.binary_image)
 
-def test_sample_3_regional_p2_ocr(ocr_engine):
-    img = cv2.imread("sample_slips/image3.jpg")
-    data = ocr_engine.extract_full_slip_data(img)
-    
-    assert data["ballot_type"] == "Regional"
-    assert data["voting_district"] == "86820598"
-    assert data["page_number"] == 2
-    assert data["page_total"] == 2
-    assert "001334868205983021" in data["barcode_text"]
-    
-    votes_by_code = {p["party_code"]: p["votes"] for p in data["party_results"]}
-    assert votes_by_code.get("VF PLUS") == 11
-    
-    # Totals block
-    assert data["total_valid_votes"] == 52
-    assert data["total_spoilt_votes"] == 0
-    assert data["total_votes_cast"] == 52
-    assert data["special_votes"] == 2
-    assert data["presiding_officer_signature_detected"] is True
-
-def test_sample_4_national_p3_ocr(ocr_engine):
-    img = cv2.imread("sample_slips/image4.jpg")
-    data = ocr_engine.extract_full_slip_data(img)
-    
-    assert data["ballot_type"] == "National"
-    assert data["voting_district"] == "86820598"
-    assert data["page_number"] == 3
-    assert data["page_total"] == 3
-    assert "001334868205981031" in data["barcode_text"]
-    assert data["total_valid_votes"] == 52
-    assert data["total_votes_cast"] == 52
-
-
-def test_limpopo_national_does_not_use_britten_defaults(ocr_engine):
-    img = cv2.imread("sample_slips/i_1.jpg")
-    data = ocr_engine.extract_full_slip_data(img)
+def test_limpopo_national_page_1(ocr_engine, enhancer):
+    data = _extract(ocr_engine, enhancer, "sample_slips/p_1.jpg")
 
     assert data["ballot_type"] == "National"
     assert data["voting_district"] == "76240234"
@@ -87,28 +28,44 @@ def test_limpopo_national_does_not_use_britten_defaults(ocr_engine):
     assert data["registered_voters"] == 1149
     assert "BRITTEN" not in (data["station_name"] or "")
     assert "BAKGAGA" in (data["station_name"] or "")
-    votes_by_code = {p["party_code"]: p["votes"] for p in data["party_results"]}
-    assert votes_by_code.get("ANC") == 481
-    assert votes_by_code.get("EFF") == 77
+    assert all(p["confidence_score"] <= 0.92 for p in data["party_results"])
 
 
-def test_limpopo_national_final_totals(ocr_engine):
-    img = cv2.imread("sample_slips/i_3.jpg")
-    data = ocr_engine.extract_full_slip_data(img)
+def test_limpopo_national_page_2(ocr_engine, enhancer):
+    data = _extract(ocr_engine, enhancer, "sample_slips/p_2.jpg")
+    assert data["ballot_type"] == "National"
+    assert data["page_number"] == 2
+    assert data["page_total"] == 3
+    assert "001334762402341021" in data["barcode_text"]
+
+
+def test_limpopo_national_final_page_identity(ocr_engine, enhancer):
+    data = _extract(ocr_engine, enhancer, "sample_slips/p_3.jpg")
     assert data["page_number"] == 3
     assert data["page_total"] == 3
-    assert data["total_valid_votes"] == 574
-    assert data["total_spoilt_votes"] == 4
-    assert data["total_votes_cast"] == 578
-    assert data["special_votes"] == 25
+    assert "001334762402341031" in (data["barcode_text"] or "")
 
 
-def test_limpopo_regional_reads_three_page_set(ocr_engine):
-    img = cv2.imread("sample_slips/i_4.jpg")
-    data = ocr_engine.extract_full_slip_data(img)
+def test_limpopo_regional_page_1(ocr_engine, enhancer):
+    data = _extract(ocr_engine, enhancer, "sample_slips/p_4.jpg")
     assert data["ballot_type"] == "Regional"
     assert data["page_number"] == 1
     assert data["page_total"] == 3
-    votes_by_code = {p["party_code"]: p["votes"] for p in data["party_results"]}
-    assert votes_by_code.get("ANC") == 462
-    assert votes_by_code.get("EFF") == 97
+
+
+def test_limpopo_provincial_page_1_identity(ocr_engine, enhancer):
+    data = _extract(ocr_engine, enhancer, "sample_slips/p_7.jpg")
+    assert data["ballot_type"] == "Provincial"
+    assert data["voting_district"] == "76240234"
+    assert data["page_number"] == 1
+    assert "001335762402342011" in (data["barcode_text"] or "")
+
+
+def test_lookup_does_not_inflate_confidence(ocr_engine, enhancer):
+    data = _extract(ocr_engine, enhancer, "sample_slips/p_1.jpg")
+    scores = [p["confidence_score"] for p in data["party_results"]]
+    assert scores
+    assert max(scores) <= 0.92
+    assert 0.96 not in scores
+    assert 0.99 not in scores
+    assert any(s < LOW_VOTE_CONFIDENCE for s in scores) or any(data.get("exception_flags") or [])

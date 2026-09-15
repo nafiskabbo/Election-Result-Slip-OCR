@@ -9,6 +9,7 @@ from backend.models import (
 )
 from backend.validation_engine import ValidationEngine
 from backend.audit_service import AuditService
+from backend.ocr_engine import LOW_VOTE_CONFIDENCE
 from backend.routes.auth import ACTIVE_USER_STATE
 
 router = APIRouter(prefix="/api/slips", tags=["Slips Management & Verification"])
@@ -213,6 +214,22 @@ def approve_slip(slip_id: str):
         raise HTTPException(
             status_code=400,
             detail="APPROVAL BLOCKED: One or more critical validation rules failed. Please correct discrepancies before approving."
+        )
+
+    cursor.execute("""
+        SELECT COUNT(*) AS n FROM party_results
+        WHERE slip_id = ? AND is_overridden = 0
+          AND (
+            (votes > 0 AND confidence_score < ?)
+            OR confidence_score < 0.4
+          )
+    """, (slip_id, LOW_VOTE_CONFIDENCE))
+    pending = cursor.fetchone()["n"]
+    if pending:
+        conn.close()
+        raise HTTPException(
+            status_code=400,
+            detail=f"APPROVAL BLOCKED: {pending} low-confidence count(s) still need confirmation in Review.",
         )
 
     now = datetime.now(timezone.utc).isoformat()
