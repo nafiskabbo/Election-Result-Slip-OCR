@@ -75,7 +75,7 @@ ballot/
 
 - Python 3.10 or higher
 - pip
-- Node 20+ (to build the React UI)
+- Node 24+ (to build the React UI)
 
 ### Installation
 
@@ -187,9 +187,10 @@ OCR needs more than Render’s free 512 MB. Use at least a **Starter** instance 
 ### 2. Frontend on Vercel
 
 1. Import the same GitHub repo in Vercel.
-2. Leave the root directory as the repo root. `vercel.json` builds `frontend/` and publishes `frontend/dist`.
-3. Add environment variable **`VITE_API_URL`** = the Render URL from step 1, **no trailing slash**.
-4. Deploy. Vite bakes `VITE_API_URL` into the bundle, so change it only by redeploying.
+2. Prefer **Root Directory = `frontend`**. Vercel then uses `frontend/package.json` (Node `24.x`) and `frontend/vercel.json`. Leave Install / Build / Output **blank** so Vite defaults apply (`npm install`, `npm run build`, `dist`).
+3. If you instead leave Root Directory as the repo root, use the root `vercel.json` (it runs `npm … --prefix frontend`). Do **not** combine Root Directory `frontend` with those `--prefix frontend` commands — that looks for `frontend/frontend/package.json` and fails.
+4. Add environment variable **`VITE_API_URL`** = the Render URL from step 1, **no trailing slash**.
+5. Deploy. Vite bakes `VITE_API_URL` into the bundle, so change it only by redeploying.
 
 Local check of the split: `VITE_API_URL=http://127.0.0.1:8000 npm run build --prefix frontend && npm run preview --prefix frontend`.
 
