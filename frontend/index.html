@@ -1,0 +1,309 @@
+<!DOCTYPE html>
+<html lang="en">
+<head>
+  <meta charset="UTF-8" />
+  <meta name="viewport" content="width=device-width, initial-scale=1.0" />
+  <title>Election Result Slip OCR Platform</title>
+  <link rel="stylesheet" href="/css/style.css" />
+</head>
+<body>
+
+  <!-- App Header -->
+  <header class="app-header">
+    <div class="header-brand">
+      <div class="brand-icon">✓</div>
+      <div>
+        <div class="brand-title">Electoral Result Slip OCR & Capture Platform</div>
+        <div class="brand-subtitle">Automated Enhancement • Multi-Page Consolidation • Audit Verification</div>
+      </div>
+    </div>
+    <div class="header-user">
+      <div class="role-badge">
+        <span>Active Persona:</span>
+        <select id="roleSelector" class="role-select">
+          <option value="operator">Data Capture Operator</option>
+          <option value="supervisor">Election Supervisor</option>
+          <option value="admin">System Administrator</option>
+          <option value="auditor">Electoral Auditor</option>
+        </select>
+      </div>
+    </div>
+  </header>
+
+  <!-- Navigation Tabs -->
+  <nav class="app-nav">
+    <button class="nav-tab active" data-tab="dashboard" onclick="App.setTab('dashboard')">
+      📊 Results Dashboard
+    </button>
+    <button class="nav-tab" data-tab="upload" onclick="App.setTab('upload')">
+      📤 Batch Upload & OCR
+    </button>
+    <button class="nav-tab" data-tab="review" onclick="App.setTab('review')">
+      🔍 Side-by-Side Review
+    </button>
+    <button class="nav-tab" data-tab="rules" onclick="App.setTab('rules')">
+      ⚙️ Validation Rule Builder
+    </button>
+    <button class="nav-tab" data-tab="audit" onclick="App.setTab('audit')">
+      📜 Audit Trail History
+    </button>
+  </nav>
+
+  <!-- Main Views Container -->
+  <main class="main-container">
+
+    <!-- TAB 1: DASHBOARD -->
+    <section id="view_dashboard" class="tab-view">
+      <!-- Stats Cards -->
+      <div id="dashboardStats" class="stats-grid"></div>
+
+      <!-- Filters and Actions -->
+      <div class="filter-bar">
+        <div class="filter-group">
+          <input type="text" id="searchField" class="search-input" placeholder="Search by VD, station, ref..." oninput="App.handleFilterChange()" />
+          
+          <select id="filterType" class="filter-select" onchange="App.handleFilterChange()">
+            <option value="">All Ballot Types</option>
+            <option value="Provincial">Provincial</option>
+            <option value="Regional">Regional</option>
+            <option value="National">National</option>
+          </select>
+
+          <select id="filterStatus" class="filter-select" onchange="App.handleFilterChange()">
+            <option value="">All Statuses</option>
+            <option value="pending_review">Pending Review</option>
+            <option value="incomplete">Incomplete (Missing Pages)</option>
+            <option value="approved">Approved</option>
+            <option value="flagged">Flagged / Exception</option>
+            <option value="rejected">Rejected</option>
+          </select>
+        </div>
+
+        <div class="filter-group">
+          <button class="btn btn-secondary" onclick="App.exportAllCsv()">
+            📥 Export All (CSV)
+          </button>
+          <button class="btn btn-primary" onclick="App.setTab('upload')">
+            + New Upload Batch
+          </button>
+        </div>
+      </div>
+
+      <!-- Slips Table -->
+      <div class="table-container">
+        <table class="data-table">
+          <thead>
+            <tr>
+              <th>Reference / VD</th>
+              <th>Type</th>
+              <th>Station / Municipality</th>
+              <th>Valid Votes</th>
+              <th>Pages Status</th>
+              <th>Status</th>
+              <th>Validation</th>
+              <th>Time</th>
+              <th style="text-align: right;">Actions</th>
+            </tr>
+          </thead>
+          <tbody id="slipsTableBody"></tbody>
+        </table>
+      </div>
+    </section>
+
+    <!-- TAB 2: UPLOAD & PROCESSING -->
+    <section id="view_upload" class="tab-view" style="display: none;">
+      <div style="max-width: 800px; margin: 0 auto;">
+        <div style="text-align: center; margin-bottom: 2rem;">
+          <h2 style="font-size: 1.5rem; font-weight: 700; margin-bottom: 0.5rem;">Upload Election Result Slips</h2>
+          <p style="color: #64748b;">
+            Accepts mixed batches of images (JPEG, PNG) and multi-page PDFs from desktop or mobile. 
+            Automated image enhancement (deskew, perspective crop, illumination correction) runs in under 1 second per page.
+          </p>
+        </div>
+
+        <!-- Dropzone -->
+        <div id="uploadDropzone" class="dropzone">
+          <div class="drop-icon">📄</div>
+          <h3 style="font-size: 1.1rem; font-weight: 600; margin-bottom: 0.25rem;">
+            Drag and drop result slips here, or click to browse
+          </h3>
+          <p style="font-size: 0.85rem; color: #64748b;">Supports JPG, PNG, PDF (Up to 50MB per batch)</p>
+          <input type="file" id="fileInput" multiple accept=".jpg,.jpeg,.png,.pdf" style="display: none;" />
+        </div>
+
+        <!-- One-Click Official Contest Samples Runner -->
+        <div style="margin-top: 1.5rem; background: #ffffff; border: 1px solid #cbd5e1; border-radius: 8px; padding: 1.25rem; display: flex; justify-content: space-between; align-items: center;">
+          <div>
+            <strong>Quick Demo: Load Official Contest Samples (1 - 4)</strong>
+            <p style="font-size: 0.8rem; color: #64748b; margin-top: 0.2rem;">
+              Loads Sample 1 (Provincial p1/2), Samples 2 & 3 (Regional p1/2 & p2/2), and Sample 4 (National p3/3) simultaneously to verify grouping, incomplete set blocking, and validation.
+            </p>
+          </div>
+          <button class="btn btn-primary" onclick="App.loadSampleSlips()">
+            ⚡ Load Official Samples
+          </button>
+        </div>
+
+        <!-- Progress Indicator -->
+        <div id="uploadProgressBox" style="display: none; margin-top: 1.5rem; background: #eff6ff; border: 1px solid #bfdbfe; border-radius: 8px; padding: 1rem; text-align: center;">
+          <div style="font-size: 1.2rem; margin-bottom: 0.5rem;">⚙️ Processing batch...</div>
+          <div id="uploadProgressText" style="font-size: 0.85rem; color: #1e40af;">Running enhancement and OCR pipeline...</div>
+        </div>
+      </div>
+    </section>
+
+    <!-- TAB 3: SIDE-BY-SIDE REVIEW WORKSPACE -->
+    <section id="view_review" class="tab-view" style="display: none;">
+      <div id="multiPageAlertBanner"></div>
+
+      <div class="workspace-grid">
+        <!-- Left: Image Viewer Pane -->
+        <div class="viewer-pane">
+          <div class="pane-header">
+            <div class="pane-title">
+              <span>🖼️ Source Ballot Image</span>
+              <div id="pageSelectorTabs" style="display: flex; gap: 0.35rem; margin-left: 0.75rem;"></div>
+            </div>
+            <div class="viewer-toolbar">
+              <button class="btn-tool" title="Zoom In" onclick="App.viewer.zoom(1.2)">🔍+</button>
+              <button class="btn-tool" title="Zoom Out" onclick="App.viewer.zoom(0.8)">🔍−</button>
+              <button class="btn-tool" title="Fit to Screen" onclick="App.viewer.fit()">⤢ Fit</button>
+              <button class="btn-tool" title="Rotate 90°" onclick="App.viewer.rotate()">↻</button>
+              <button class="btn-tool" title="Reset" onclick="App.viewer.reset()">↺</button>
+            </div>
+          </div>
+
+          <div id="viewerContainer" class="image-canvas-container">
+            <img id="slipImage" class="slip-image" alt="Ballot Slip" />
+            <div id="viewerOverlay" style="position: absolute; top: 0; left: 0; width: 100%; height: 100%; pointer-events: none;"></div>
+          </div>
+        </div>
+
+        <!-- Right: Tabular Data Form Pane -->
+        <div class="form-pane">
+          <div class="pane-header">
+            <div class="pane-title">📝 Extracted Data & Validation</div>
+            <div style="display: flex; gap: 0.5rem;">
+              <button class="btn btn-secondary btn-sm" onclick="App.openLinkModal()" title="Link page to another slip">
+                🔗 Link
+              </button>
+              <button class="btn btn-secondary btn-sm" onclick="App.openUnlinkModal()" title="Unlink current page into new slip">
+                ⛓️ Unlink
+              </button>
+              <button id="btnExportPdf" class="btn btn-secondary btn-sm" onclick="App.exportCurrentPdf()">
+                📄 PDF Cert
+              </button>
+            </div>
+          </div>
+
+          <div class="form-content">
+            <!-- Header Summary -->
+            <div id="slipMetaSummary"></div>
+
+            <!-- Party Results Table -->
+            <div style="margin-top: 1rem;">
+              <div style="display: flex; justify-content: space-between; align-items: center; margin-bottom: 0.5rem;">
+                <strong style="font-size: 0.85rem; text-transform: uppercase; color: #475569;">Party / Candidate Vote Counts</strong>
+                <span style="font-size: 0.75rem; color: #64748b;">Hover row to highlight bounding box</span>
+              </div>
+
+              <div class="table-container" style="max-height: 280px; overflow-y: auto;">
+                <table class="data-table" style="font-size: 0.8rem;">
+                  <thead>
+                    <tr>
+                      <th>#</th>
+                      <th>Candidate / Party</th>
+                      <th style="text-align: right;">Result (Votes)</th>
+                      <th style="text-align: center;">Confidence</th>
+                      <th style="text-align: center;">Agent Sig</th>
+                    </tr>
+                  </thead>
+                  <tbody id="partyResultsBody"></tbody>
+                </table>
+              </div>
+            </div>
+
+            <!-- Totals & Reconciliation Block -->
+            <div id="totalsReconciliationBlock"></div>
+
+            <!-- Live Validation Results Checklist -->
+            <div style="margin-top: 1.25rem;">
+              <strong style="font-size: 0.85rem; text-transform: uppercase; color: #475569; display: block; margin-bottom: 0.5rem;">
+                Rule Engine Verification Checks
+              </strong>
+              <div id="validationResultsList"></div>
+            </div>
+
+            <!-- Bottom Decision Bar -->
+            <div style="margin-top: 1.5rem; padding-top: 1rem; border-top: 1px solid #e2e8f0; display: flex; justify-content: space-between; align-items: center; gap: 0.75rem;">
+              <div>
+                <button class="btn btn-danger btn-sm" onclick="App.rejectCurrentSlip()">
+                  ✕ Reject Slip
+                </button>
+                <button class="btn btn-warning btn-sm" onclick="App.flagCurrentSlip()">
+                  🚩 Flag for Review
+                </button>
+              </div>
+
+              <div>
+                <button id="btnApproveSlip" class="btn btn-success" onclick="App.approveCurrentSlip()">
+                  ✓ Approve & Certify Result
+                </button>
+              </div>
+            </div>
+          </div>
+        </div>
+      </div>
+    </section>
+
+    <!-- TAB 4: VALIDATION RULE BUILDER -->
+    <section id="view_rules" class="tab-view" style="display: none;">
+      <div style="max-width: 900px; margin: 0 auto;">
+        <div style="margin-bottom: 1.5rem;">
+          <h2 style="font-size: 1.5rem; font-weight: 700; margin-bottom: 0.5rem;">Validation Engine & Rule Builder</h2>
+          <p style="color: #64748b;">
+            Configure election verification rules, severity levels, and mathematical thresholds. 
+            Critical errors block operator approval, while warnings highlight discrepancies for supervisor attention.
+          </p>
+        </div>
+
+        <div id="ruleBuilderContainer"></div>
+      </div>
+    </section>
+
+    <!-- TAB 5: AUDIT TRAIL HISTORY -->
+    <section id="view_audit" class="tab-view" style="display: none;">
+      <div style="max-width: 900px; margin: 0 auto;">
+        <div style="margin-bottom: 1.5rem;">
+          <h2 style="font-size: 1.5rem; font-weight: 700; margin-bottom: 0.5rem;">System-Wide Audit Trail</h2>
+          <p style="color: #64748b;">
+            Immutable, append-only log of every upload, enhancement, OCR extraction, manual override, linking action, and approval decision with operator IDs, timestamps, and justification.
+          </p>
+        </div>
+
+        <div id="systemAuditList" style="background: #ffffff; border: 1px solid #cbd5e1; border-radius: 8px; padding: 1.5rem;"></div>
+      </div>
+    </section>
+
+  </main>
+
+  <!-- Modal: Slip Audit Drawer -->
+  <div id="auditModal" class="modal-overlay" style="display: none;">
+    <div class="modal-content">
+      <div class="modal-header">
+        <h3 style="font-size: 1.1rem; font-weight: 700;">Slip Audit History</h3>
+        <button class="btn-tool" onclick="App.closeAuditDrawer()">✕</button>
+      </div>
+      <div class="modal-body" id="auditModalBody"></div>
+      <div class="modal-footer">
+        <button class="btn btn-secondary" onclick="App.closeAuditDrawer()">Close</button>
+      </div>
+    </div>
+  </div>
+
+  <!-- Scripts -->
+  <script src="/js/viewer.js"></script>
+  <script src="/js/components.js"></script>
+  <script src="/js/app.js"></script>
+</body>
+</html>
