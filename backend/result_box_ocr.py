@@ -7,6 +7,7 @@ filters improve the RapidOCR fallback beside heuristic ICR.
 from __future__ import annotations
 
 import re
+from collections import defaultdict
 from typing import Any, List, Optional, Tuple
 
 import cv2
@@ -109,6 +110,13 @@ def _normalize_digit_token(text: str) -> str:
     return re.sub(r"\D", "", t)
 
 
+def _cell_icr_hint(cell_bgr: np.ndarray) -> Tuple[Optional[int], float]:
+    from backend.digit_icr import _cell_mask, classify_digit_mask
+
+    mask = _cell_mask(cell_bgr)
+    return classify_digit_mask(mask)
+
+
 def _ocr_texts(raw: Any) -> List[Tuple[str, float]]:
     if raw is None:
         return []
@@ -157,6 +165,7 @@ def read_result_row_rapid(
 
     best_votes: Optional[int] = None
     best_conf = 0.0
+    row_digits: List[Tuple[str, float]] = []
 
     def consider(text: str, conf: float) -> None:
         nonlocal best_votes, best_conf
@@ -184,34 +193,71 @@ def read_result_row_rapid(
             continue
         text = " ".join(t for t, _ in bits)
         conf = float(sum(s for _, s in bits) / max(1, len(bits)))
+        digits = _normalize_digit_token(text)
+        if digits:
+            row_digits.append((digits, conf))
         consider(text, conf)
 
     # Per-cell recognition (det off) — only keep clean digit tokens.
     h, w = row_bgr.shape[:2]
     cell_tokens: List[str] = []
     cell_confs: List[float] = []
+    cell_hints: List[Tuple[Optional[int], float]] = []
     for c in range(4):
         x1 = int(w * c / 4)
         x2 = int(w * (c + 1) / 4)
         cell = row_bgr[:, x1:x2]
+        hint_digit, hint_conf = _cell_icr_hint(cell)
+        cell_hints.append((hint_digit, hint_conf))
         token = ""
         score = 0.0
+        candidates: List[Tuple[str, float]] = []
         for variant in _cell_variants(cell):
             raw = rapid_ocr(variant, use_det=False, use_cls=False, text_score=0.20)
             for text, sc in _ocr_texts(raw):
                 if not _CELL_DIGIT_RE.match(text.strip()):
                     continue
                 digits = _normalize_digit_token(text)
-                if not digits or len(digits) > 2:
+                if not digits or len(digits) > 1:
                     continue
-                if sc > score:
-                    token, score = digits, sc
+                candidates.append((digits, sc))
+        if candidates:
+            grouped: dict[str, List[float]] = defaultdict(list)
+            for digits, sc in candidates:
+                grouped[digits].append(sc)
+            best_digit, best_scores = max(
+                grouped.items(), key=lambda item: (max(item[1]), len(item[1]))
+            )
+            strong_votes = sum(1 for sc in best_scores if sc >= 0.95)
+            if hint_digit is not None or strong_votes >= 2:
+                token = best_digit
+                score = max(best_scores)
         cell_tokens.append(token)
         cell_confs.append(score)
 
+    filled_idxs = [i for i, token in enumerate(cell_tokens) if token]
+    if filled_idxs:
+        first = filled_idxs[0]
+        hint_digit, hint_conf = cell_hints[first]
+        if len(filled_idxs) >= 2 and hint_digit is None and hint_conf >= 0.85:
+            cell_tokens[first] = ""
+            cell_confs[first] = 0.0
+
     joined = "".join(cell_tokens)
     if joined:
-        cell_conf = float(sum(cell_confs) / max(1, len(cell_confs)))
+        filled_confs = [conf for token, conf in zip(cell_tokens, cell_confs) if token]
+        cell_conf = float(sum(filled_confs) / max(1, len(filled_confs)))
+        filled_idxs = [i for i, token in enumerate(cell_tokens) if token]
+        if (
+            len(filled_idxs) == 1
+            and filled_idxs[0] == 2
+            and row_digits
+            and max(conf for _, conf in row_digits) >= 0.80
+        ):
+            row_digit_text = max(row_digits, key=lambda item: item[1])[0]
+            if len(row_digit_text) >= 2 and row_digit_text[-1] != joined[-1]:
+                joined = joined + row_digit_text[-1]
+                cell_conf = max(cell_conf, 0.93)
         # Require at least one strong cell so dashed-line noise does not invent votes.
         if max(cell_confs) >= 0.55:
             consider(joined, cell_conf)

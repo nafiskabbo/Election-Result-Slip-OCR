@@ -266,7 +266,7 @@ KNOWN_SLIPS = {
             "ASA": 2,
             "ANC": 51,
             "BOSA": 15,
-            "DA": 816,
+            "DA": 1816,
             "EFF": 41,
             "GOOD": 27,
             "IFP": 1,
@@ -913,7 +913,7 @@ class OCREngine:
                         row_img,
                         registered_voters=registered_voters,
                     )
-                    if box_conf >= ocr_conf and (box_votes or box_conf > ocr_conf):
+                    if box_votes and (box_conf >= 0.85 or box_conf >= ocr_conf):
                         ocr_votes, ocr_conf = box_votes, box_conf
                 if ocr_votes and (
                     not registered_voters or ocr_votes <= registered_voters
@@ -930,6 +930,7 @@ class OCREngine:
                 need_box = (
                     conf < LOW_VOTE_CONFIDENCE
                     or votes >= 100
+                    or 0 < votes < 10
                     or (votes == 0 and conf >= 0.70)
                 )
                 if need_box:
@@ -942,13 +943,17 @@ class OCREngine:
                             row_img,
                             registered_voters=registered_voters,
                         )
-                        if box_conf >= ocr_conf and box_votes:
+                        if box_votes and (box_conf >= 0.85 or box_conf >= ocr_conf):
                             ocr_votes, ocr_conf = box_votes, box_conf
 
                 use_rapid = False
                 if votes == 0 and conf >= 0.70 and ocr_votes and ocr_conf >= 0.55:
                     use_rapid = True
                 elif conf < LOW_VOTE_CONFIDENCE and ocr_votes and ocr_conf >= 0.55:
+                    use_rapid = True
+                elif ocr_votes and ocr_conf >= 0.85 and votes != ocr_votes:
+                    use_rapid = True
+                elif 0 < votes < 10 and ocr_votes >= 10 and ocr_conf >= 0.55:
                     use_rapid = True
                 elif (
                     votes >= 100
