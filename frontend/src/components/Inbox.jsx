@@ -1,7 +1,12 @@
 import { useEffect, useRef, useState } from "react";
 import { api, apiUrl, statusLabel } from "../api.js";
+import { formatExactTime, formatRelativeTime } from "../time.js";
 import { Icon } from "./Icons.jsx";
 import Sheet from "./Sheet.jsx";
+
+function uploadedLabel(slip) {
+  return slip.uploaded_at || slip.created_at;
+}
 
 export default function Inbox({
   slips,
@@ -166,6 +171,7 @@ export default function Inbox({
               <th>Station</th>
               <th className="num">Valid</th>
               <th>Pages</th>
+              <th>Uploaded</th>
               <th>Status</th>
               <th></th>
             </tr>
@@ -173,11 +179,12 @@ export default function Inbox({
           <tbody>
             {slips.length === 0 && (
               <tr>
-                <td colSpan="7" className="empty">Nothing captured yet.</td>
+                <td colSpan="8" className="empty">Nothing captured yet.</td>
               </tr>
             )}
             {slips.map((slip) => {
               const complete = slip.total_received_pages >= slip.total_expected_pages;
+              const uploaded = uploadedLabel(slip);
               return (
                 <tr key={slip.id} className={(slip.ballot_type || "").toLowerCase()}>
                   <td>
@@ -207,6 +214,15 @@ export default function Inbox({
                     </span>
                   </td>
                   <td>
+                    {uploaded ? (
+                      <time dateTime={uploaded} title={formatExactTime(uploaded)}>
+                        {formatRelativeTime(uploaded)}
+                      </time>
+                    ) : (
+                      <span className="sub">—</span>
+                    )}
+                  </td>
+                  <td>
                     <span className={`chip ${slip.status}`}>{statusLabel(slip.status)}</span>
                     {slip.has_errors ? <div className="sub">Checks failed</div> : null}
                   </td>
@@ -227,6 +243,7 @@ export default function Inbox({
         {slips.length === 0 && <div className="empty">Nothing captured yet.</div>}
         {slips.map((slip) => {
           const complete = slip.total_received_pages >= slip.total_expected_pages;
+          const uploaded = uploadedLabel(slip);
           return (
             <div
               key={slip.id}
@@ -249,6 +266,14 @@ export default function Inbox({
                 </div>
                 <div className="slip-card-station">{slip.station_name || "Station unread"}</div>
                 <div className="sub">VD {slip.voting_district} · {slip.total_valid_votes} valid</div>
+                {uploaded ? (
+                  <div className="sub">
+                    Uploaded{" "}
+                    <time dateTime={uploaded} title={formatExactTime(uploaded)}>
+                      {formatRelativeTime(uploaded)}
+                    </time>
+                  </div>
+                ) : null}
               </button>
               <div className="slip-card-actions">
                 <button

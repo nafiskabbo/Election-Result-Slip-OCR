@@ -1,0 +1,4 @@
+# Optional deps for digit CNN fine-tune (not required to run the desk / OCR API).
+torch>=2.2.0
+torchvision>=0.17.0
+onnxscript>=0.1.0

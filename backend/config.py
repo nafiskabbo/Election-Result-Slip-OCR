@@ -14,6 +14,11 @@ SAMPLE_DIR = Path(os.environ.get("SAMPLE_DIR", str(ROOT_DIR / "sample_slips")))
 FRONTEND_DIST = ROOT_DIR / "frontend" / "dist"
 PORT = int(os.environ.get("PORT", "8000"))
 
+# Production RESULT digit path (accuracy_vote_path_compare.md: hybrid beats Rapid-only).
+# heuristic = topology ICR + digit-tuned RapidOCR box fusion.
+PRODUCTION_DIGIT_BACKEND = os.environ.get("DIGIT_BACKEND", "heuristic").strip().lower()
+PRODUCTION_RAPIDOCR_MODEL = os.environ.get("RAPIDOCR_MODEL", "small").strip().lower()
+
 # Host-side default matches docker-compose (loopback 5433). In the API
 # container Compose sets DATABASE_URL to the `db` service.
 DATABASE_URL = os.environ.get(

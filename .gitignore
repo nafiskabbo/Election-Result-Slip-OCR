@@ -9,6 +9,10 @@ ballot_ocr.db
 ballot_ocr.db-journal
 ballot_ocr.db-wal
 ballot_ocr.db-shm
+storage/accuracy_report.txt
+storage/accuracy_report.md
+storage/accuracy_report_medium_detail.md
+storage/accuracy_vote_path_compare.md
 storage/raw/*
 !storage/raw/.gitkeep
 storage/enhanced/*
@@ -29,3 +33,8 @@ frontend/dist/
 .local-secrets/
 .agents/skills/vps-komodo
 backups/
+backend/models/finetune/data/cells/
+backend/models/finetune/runs/
+backend/digit_finetune/data/cells/
+backend/digit_finetune/runs/
+*.pt

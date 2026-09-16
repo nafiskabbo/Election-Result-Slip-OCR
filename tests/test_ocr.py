@@ -51,16 +51,24 @@ def test_parse_vote_digits_four_blocks():
     assert parse_vote_digits("12345") == 2345  # keep last 4 boxes only
 
 
-def test_digits_to_votes_left_aligned():
+def test_digits_to_votes_aligned():
     from backend.digit_icr import digits_to_votes
 
+    # Left-aligned with trailing empties (older Limpopo photos)
     assert digits_to_votes([0, 1, None, None])[0] == 1
     assert digits_to_votes([4, 8, 1, None])[0] == 481
     assert digits_to_votes([7, 7, None, None])[0] == 77
     assert digits_to_votes([None, None, None, None])[0] == 0
     assert digits_to_votes([0, None, None, None])[0] == 0
-    assert digits_to_votes([8, None, None, None])[0] == 0  # misread Ø
+    assert digits_to_votes([8, None, None, None])[0] == 0  # misread Ø in first box
     assert digits_to_votes([0, None, 7, None])[0] == 0  # gap noise
+
+    # Right-aligned with empty leading boxes (no written leading zero)
+    assert digits_to_votes([None, None, None, 9])[0] == 9
+    assert digits_to_votes([None, None, 1, 8])[0] == 18
+    assert digits_to_votes([None, 8, 1, 6])[0] == 816
+    assert digits_to_votes([None, None, 5, 1])[0] == 51
+    assert digits_to_votes([None, None, None, 1])[0] == 1
 
 
 def test_limpopo_national_page_2(ocr_engine, enhancer):

@@ -57,6 +57,7 @@ def list_slips(
         val_statuses = [v["status"] for v in cursor.fetchall()]
         d["has_errors"] = "fail" in val_statuses
         d["has_warnings"] = "warn" in val_statuses
+        d["uploaded_at"] = d.get("created_at")
         slips.append(SlipSummaryResponse(**d))
 
     conn.close()
@@ -74,6 +75,7 @@ def get_slip_detail(slip_id: str):
         raise HTTPException(status_code=404, detail=f"Slip {slip_id} not found.")
 
     slip_dict = dict(slip)
+    slip_dict["uploaded_at"] = slip_dict.get("created_at")
 
     # Pages
     cursor.execute("SELECT * FROM slip_pages WHERE slip_id = ? ORDER BY page_number ASC", (slip_id,))

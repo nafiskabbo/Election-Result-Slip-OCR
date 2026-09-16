@@ -1,5 +1,6 @@
 import { useEffect, useMemo, useState } from "react";
 import { api, apiUrl, fileUrl, statusLabel } from "../api.js";
+import { formatExactTime, formatRelativeTime } from "../time.js";
 import Viewer from "./Viewer.jsx";
 import Prompt from "./Prompt.jsx";
 import { Icon } from "./Icons.jsx";
@@ -175,6 +176,26 @@ export default function Review({ slip, mobileTab = "photo", onReload, onInbox, n
           {active.municipality ? ` · ${active.municipality}` : ""}
           {active.province ? ` · ${active.province}` : ""}
         </div>
+        {(active.uploaded_at || active.created_at) ? (
+          <div className="sub">
+            Uploaded{" "}
+            <time
+              dateTime={active.uploaded_at || active.created_at}
+              title={formatExactTime(active.uploaded_at || active.created_at)}
+            >
+              {formatExactTime(active.uploaded_at || active.created_at)}
+              {" "}({formatRelativeTime(active.uploaded_at || active.created_at)})
+            </time>
+          </div>
+        ) : null}
+        {page?.upload_timestamp ? (
+          <div className="sub">
+            Page {page.page_number} captured{" "}
+            <time dateTime={page.upload_timestamp} title={formatExactTime(page.upload_timestamp)}>
+              {formatExactTime(page.upload_timestamp)}
+            </time>
+          </div>
+        ) : null}
       </div>
 
       {complete ? (

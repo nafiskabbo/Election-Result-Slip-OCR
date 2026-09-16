@@ -7,14 +7,15 @@ from fastapi.encoders import jsonable_encoder
 from backend.image_enhancer import ImageEnhancer
 from backend.ocr_engine import OCREngine
 from backend.grouping_engine import GroupingEngine
+from backend.page_pipeline import extract_page_from_file
 from backend.validation_engine import ValidationEngine
 from backend.routes.auth import ACTIVE_USER_STATE
-from backend.config import STORAGE_DIR, SAMPLE_DIR, SAMPLE_PACKS, ensure_dirs
+from backend.config import STORAGE_DIR, SAMPLE_DIR, SAMPLE_PACKS, ensure_dirs, PRODUCTION_RAPIDOCR_MODEL
 
 router = APIRouter(prefix="/api/upload", tags=["Upload & Processing Pipeline"])
 
 enhancer = ImageEnhancer()
-ocr_engine = OCREngine()
+ocr_engine = OCREngine(rapidocr_model=PRODUCTION_RAPIDOCR_MODEL)
 grouping_engine = GroupingEngine()
 validation_engine = ValidationEngine()
 
@@ -25,8 +26,13 @@ def _process_saved_file(raw_path: str, original_filename: str, file_size: int, m
     num_pages = enhancer.count_pdf_pages(raw_path)
 
     for p_idx in range(num_pages):
-        cv_img = enhancer.load_file_as_cv2(raw_path, page_index=p_idx)
-        enh_res = enhancer.process_image(cv_img)
+        enh_res, extracted_data = extract_page_from_file(
+            raw_path,
+            p_idx,
+            enhancer=enhancer,
+            ocr_engine=ocr_engine,
+            use_known=True,
+        )
 
         enh_filename = f"enh_{uuid.uuid4().hex[:10]}_{os.path.splitext(original_filename)[0]}_p{p_idx+1}.jpg"
         disk_enh = STORAGE_DIR / "enhanced" / enh_filename
@@ -34,12 +40,6 @@ def _process_saved_file(raw_path: str, original_filename: str, file_size: int, m
         enhancer.save_results(enh_res, str(disk_enh), str(disk_thumb))
         enh_path = f"storage/enhanced/{enh_filename}"
         thumb_path = f"storage/thumbnails/thumb_{enh_filename}"
-
-        extracted_data = ocr_engine.extract_full_slip_data(
-            enh_res.enhanced_image,
-            use_known=True,
-            binary=enh_res.binary_image,
-        )
 
         current_user_id = ACTIVE_USER_STATE["id"]
         slip_id, page_id, summary = grouping_engine.process_extracted_page(

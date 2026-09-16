@@ -16,15 +16,16 @@ A full-stack election result digitisation platform that automates the capture, e
 
 ## Tech Stack
 
-| Layer             | Technology                         |
-|-------------------|------------------------------------|
-| **Backend**       | Python 3.10+, FastAPI, Uvicorn     |
-| **OCR**           | RapidOCR (ONNX Runtime)            |
-| **Image Processing** | OpenCV 5.0, Pillow              |
-| **Database**      | PostgreSQL 16                      |
-| **PDF Export**     | ReportLab                         |
-| **Frontend**      | React 18 + Vite                     |
-| **Testing**       | Pytest + HTTPX                     |
+| Layer                | Technology                          |
+|----------------------|-------------------------------------|
+| **Backend**          | Python 3.11–3.13, FastAPI, Uvicorn  |
+| **OCR**              | RapidOCR 3.9+ PP-OCRv6 **small** + custom RESULT ICR (hybrid) |
+| **Image Processing** | OpenCV 4.x, Pillow                  |
+| **Database**         | PostgreSQL 16                       |
+| **PDF Export**       | ReportLab                           |
+| **Frontend**         | React 18 + Vite (served by the API) |
+| **Hosting**          | Self-hosted Docker Compose          |
+| **Testing**          | Pytest + HTTPX                      |
 
 ## Project Structure
 
@@ -36,6 +37,12 @@ ballot/
 │   ├── models.py              # Pydantic request/response models
 │   ├── image_enhancer.py      # OpenCV enhancement pipeline
 │   ├── ocr_engine.py          # RapidOCR + barcode parser
+│   ├── digit_cnn.py           # Experimental MNIST/EMNIST digit CNN
+│   ├── digit_icr.py           # 4-box handwritten RESULT digits
+│   ├── result_box_ocr.py      # RapidOCR tuned for RESULT boxes
+│   ├── page_pipeline.py       # Shared upload + accuracy extract path
+│   ├── models/                # ONNX digit weights (not a Python package)
+│   ├── digit_finetune/        # Export cells + hard augment + train CNN
 │   ├── grouping_engine.py     # Multi-page grouping logic
 │   ├── validation_engine.py   # 7-rule validation engine
 │   ├── audit_service.py       # Immutable audit logging
@@ -68,44 +75,52 @@ ballot/
 │   ├── API_SPECIFICATION.md   # REST API reference
 │   ├── CONTEST_PROPOSAL.md    # Developer brief response
 │   └── USER_GUIDE.md          # Operator handbook
+├── deploy/                    # Reverse-proxy snippet for Compose
+├── scripts/                   # Optional VPS deploy / backup helpers
+├── Dockerfile                 # API + built desk image
+├── docker-compose.yml         # api + Postgres, loopback ports
 ├── requirements.txt           # Python dependencies
-├── run.sh                     # Single-command startup
+├── run.sh                     # Local startup (venv + Postgres + API)
 └── Readme.md
 ```
 
 ## Quick Start
 
+The platform is **self-hosted**. The API and the React desk run as one service (same origin) on a machine you control.
+
 ### Prerequisites
 
-- Python 3.10 or higher
+- Python **3.11–3.13** (OCR wheels do not install on 3.14)
 - pip
-- Node 24+ (to build the React UI)
-- Docker (PostgreSQL via `docker compose up -d db`)
+- Node 24+ (to build the React desk)
+- Docker (PostgreSQL, and the production image)
 
 ### Installation
 
 ```bash
-# Clone the repository
 git clone <repo-url>
 cd ballot
 
-# Create virtual environment
-python3 -m venv venv
+python3.12 -m venv venv   # 3.11 or 3.13 also work
 source venv/bin/activate
-
-# Install dependencies
 pip install -r requirements.txt
 cd frontend && npm install && npm run build && cd ..
 ```
 
-### Running the Application
+Copy `.env.example` to `.env` if you want to change the Postgres password or bind port. Defaults match `docker-compose.yml`.
+
+### Running locally
 
 ```bash
-# Option 1: Use the startup script (starts Postgres, then the API)
+# Option 1 — one command: Postgres, schema, built desk, API with reload
 chmod +x run.sh
 ./run.sh
+```
 
-# Option 2: API and Vite separately (this is how Render + Vercel run)
+Open **http://127.0.0.1:8000**. The desk is served from `frontend/dist` on the same origin as `/api`.
+
+```bash
+# Option 2 — live Vite UI while you work on the desk
 docker compose up -d db
 source venv/bin/activate
 python -m uvicorn backend.main:app --host 0.0.0.0 --port 8000 --reload
@@ -113,7 +128,14 @@ python -m uvicorn backend.main:app --host 0.0.0.0 --port 8000 --reload
 cd frontend && npm install && npm run dev
 ```
 
-Open **http://localhost:5173** for the desk (Vite proxies `/api` to port 8000), or **http://localhost:8000** if you used `./run.sh`.
+Open **http://127.0.0.1:5173**. Vite proxies `/api`, `/storage`, and `/sample_slips` to port 8000. Leave `VITE_API_URL` unset so the browser stays same-origin through the proxy.
+
+```bash
+# Option 3 — production-like stack (built image + Postgres)
+docker compose up -d --build
+```
+
+Open **http://127.0.0.1:8010**. Compose binds the API to loopback on port 8010 and Postgres to `127.0.0.1:5433`. Public traffic should go through a reverse proxy, not a published `0.0.0.0` port.
 
 ### Running Tests
 
@@ -123,16 +145,23 @@ Open **http://localhost:5173** for the desk (Vite proxies `/api` to port 8000), 
 
 That command:
 
-1. Runs OCR on **every photo in `sample_slips/`** and scores it against `tests/fixtures/sample_gold.json` (raw OCR, no hardcoded lookup).
+1. Runs the **same extract path as the desk** (`POST /api/upload`) on every photo in `sample_slips/` and scores it against `tests/fixtures/sample_gold.json`.
 2. Then runs pytest (enhancement, OCR identity, grouping, validation, audit, API).
 
 Accuracy only:
 
 ```bash
 ./run.sh accuracy
-./run.sh accuracy --with-known
+./run.sh accuracy --raw-ocr
+./run.sh accuracy --raw-ocr --rapidocr-model both
+./run.sh accuracy --raw-ocr --compare-digit-cnn
 ./run.sh accuracy --fail-under 95
+./run.sh accuracy --out /tmp/accuracy_report.md
 ```
+
+Default is the Upload API path (`KNOWN_SLIPS` on) with **PP-OCRv6 small** and the **hybrid** RESULT path (heuristic ICR + RapidOCR box fusion). That hybrid beat RapidOCR-only by +8 pp on party votes (`./run.sh accuracy --raw-ocr --compare-vote-path`). **`--raw-ocr`** turns the lookup off. **`--rapidocr-model both`** writes a small-vs-medium compare Markdown. Add **`--compare-digit-cnn`** only for the experimental digit CNN table.
+
+Each run writes `storage/accuracy_report.md` (tables: summary, focus slips, heuristic vs CNN, misses, per-file). Use `--out file.txt` for the older plain-text dump.
 
 Or, with the venv already created:
 
@@ -176,6 +205,18 @@ See [`API_SPECIFICATION.md`](docs/API_SPECIFICATION.md) for the full REST API re
 
 Photographed slips live in `sample_slips/`. Gold labels for the accuracy command are in `tests/fixtures/sample_gold.json`.
 
+Digit CNN fine-tune (MNIST/EMNIST + hard IEC augment) lives under `backend/digit_finetune/` with ONNX weights in `backend/models/`. Export cells, then train:
+
+```bash
+./run.sh digit-export
+pip install -r requirements-train.txt
+./run.sh digit-train --epochs 5
+# later, after confirmation on handwriting:
+./run.sh digit-train --include-handwriting --i-confirm-handwriting
+```
+
+See [`backend/models/README.md`](backend/models/README.md).
+
 | Image | Ballot | Page | Station |
 |-------|--------|------|---------|
 | `p_1.jpg`–`p_3.jpg` | National | 1–3 of 3 | Bakgaga Ba-Maake Traditional Aut |
@@ -183,34 +224,72 @@ Photographed slips live in `sample_slips/`. Gold labels for the accuracy command
 | `p_7.jpg`–`p_9.jpg` | Provincial | 1–3 of 3 | Same Limpopo station |
 | `page_1_provincial_ballot.jpeg` | Provincial | 1 of 2 | Sosebenza Primary School (Cape Town) |
 | `national_election.jpeg`, `nation_cape_town.jpeg` | Worksheet | n/a | Different layout; scored separately |
+| `ResultSlip.jpg`, `image1.jpg` | Provincial | 1 of 2 | Britten Station Shop (North West); gold votes ANC=9 DA=18 EFF=6 M.K.=1 ACTIONSA=18 |
+| `Result_Slip_2024_Previous_Election_Sample.jpg` | Provincial | 1 of 2 | Sea Point Primary School (Western Cape); right-aligned handwritten RESULT boxes |
 
-## Render + Vercel
+## Self-hosting
 
-The Python API runs on Render. The React desk runs on Vercel and calls that API.
+Always run the API and desk on a machine you control. The Docker image builds the React desk and FastAPI serves it from the same origin, so operators only need one URL.
 
-### 1. Backend on Render
+### What the stack is
 
-1. Push this repo to GitHub.
-2. In Render, create a **Blueprint** from the repo (`render.yaml`) or a **Web Service** with:
-   - Runtime: **Docker**
-   - Dockerfile path: `./Dockerfile`
-   - Health check: `/api/health`
-3. After the first deploy, copy the service URL, e.g. `https://ballot-api.onrender.com`.
-4. Set `CORS_ORIGINS` to your Vercel origin (no trailing slash), or leave `*` while you are wiring things up.
+| Service | Role | Default bind |
+|---------|------|----------------|
+| `api` | FastAPI + built desk + OCR | `127.0.0.1:8010` → container `:8000` |
+| `db` | PostgreSQL 16 | `127.0.0.1:5433` → container `:5432` |
 
-Optional persistent disk (paid plans): mount `/data` and set `DATA_DIR=/data`, `STORAGE_DIR=/data/storage`, plus a Postgres `DATABASE_URL`. Uploaded images live on the disk; records live in Postgres.
+Uploaded photographs stay on a Docker volume (`/data/storage`). Slip records, party counts, and the audit trail stay in Postgres.
 
-OCR needs more than Render’s free 512 MB. Use at least a **Starter** instance if uploads die with out-of-memory errors.
+Give the API container **at least ~1.5 GB RAM**. OCR on photographed A4 slips will OOM below that.
 
-### 2. Frontend on Vercel
+### Deploy with Compose
 
-1. Import the same GitHub repo in Vercel.
-2. Prefer **Root Directory = `frontend`**. Vercel then uses `frontend/package.json` (Node `24.x`) and `frontend/vercel.json`. Leave Install / Build / Output **blank** so Vite defaults apply (`npm install`, `npm run build`, `dist`).
-3. If you instead leave Root Directory as the repo root, use the root `vercel.json` (it runs `npm … --prefix frontend`). Do **not** combine Root Directory `frontend` with those `--prefix frontend` commands — that looks for `frontend/frontend/package.json` and fails.
-4. Add environment variable **`VITE_API_URL`** = the Render URL from step 1, **no trailing slash**.
-5. Deploy. Vite bakes `VITE_API_URL` into the bundle, so change it only by redeploying.
+On the host (after cloning this repo):
 
-Local check of the split: `VITE_API_URL=http://127.0.0.1:8000 npm run build --prefix frontend && npm run preview --prefix frontend`.
+```bash
+cp .env.example .env   # set POSTGRES_PASSWORD
+docker compose up -d --build
+curl -fsS http://127.0.0.1:8010/api/health
+```
+
+Environment the API container uses (Compose sets these; override in `.env` where noted):
+
+| Variable | Purpose |
+|----------|---------|
+| `POSTGRES_PASSWORD` | Postgres password (required in production; Compose default is only for local) |
+| `DATABASE_URL` | Set automatically inside Compose to the `db` service |
+| `DATA_DIR` / `STORAGE_DIR` | Image files on the `ballot-ocr-data` volume |
+| `CORS_ORIGINS` | Leave `*` when the desk is same-origin. Set an explicit origin only if a separate UI host calls the API |
+| `PORT` | Listen port inside the container (`8000`) |
+
+Do not set `VITE_API_URL` for this image. The Dockerfile builds the desk with an empty API base so the browser calls `/api` on the same host.
+
+### Reverse proxy
+
+Compose binds loopback only. Put Caddy or nginx in front for TLS and a public hostname. Example (Caddy), matching `deploy/caddy-ballot.caddy`:
+
+```
+your-ballot.example {
+    encode gzip
+    reverse_proxy 127.0.0.1:8010
+}
+```
+
+Health check: `GET /api/health`. Interactive docs: `/docs`.
+
+### Optional VPS helper
+
+`./scripts/vps-ballot.sh deploy` rsyncs this repo to an isolated Compose stack, reloads Caddy, and builds the image. Other commands: `health`, `status`, `backup`, `restore`, `teardown`. That stack is separate from any other services on the same host.
+
+### Operations
+
+```bash
+docker compose ps
+docker compose logs -f api
+./scripts/vps-ballot.sh backup    # on the VPS helper path
+```
+
+Schema apply, backup, and restore notes are in [`schema/README.md`](schema/README.md).
 
 ## Usage Workflow
 

@@ -174,5 +174,75 @@
       "ATM": 26
     },
     "totals": {"valid": 2016, "spoilt": 9, "cast": 2025}
+  },
+  "Result_Slip_2024_Previous_Election_Sample.jpg": {
+    "template": "iec_slip",
+    "barcode_text": "001335970900502011",
+    "ballot_type": "Provincial",
+    "page_number": 1,
+    "page_total": 2,
+    "voting_district": "97090050",
+    "province": "Western Cape",
+    "municipality": "CPT",
+    "station_name": "SEA POINT PRIMARY SCHOOL",
+    "registered_voters": 3080,
+    "votes": {
+      "A.C.C.": 1,
+      "AM4C": 2,
+      "ASA": 2,
+      "ANC": 51,
+      "BOSA": 15,
+      "DA": 816,
+      "EFF": 41,
+      "GOOD": 27,
+      "IFP": 1,
+      "CCC": 1,
+      "PAC": 1,
+      "PA": 7,
+      "RP": 2,
+      "RISE": 52,
+      "SUN": 1,
+      "M.K.": 6,
+      "UDM": 3,
+      "VF PLUS": 22
+    }
+  },
+  "ResultSlip.jpg": {
+    "template": "iec_slip",
+    "barcode_text": "001335868205982011",
+    "ballot_type": "Provincial",
+    "page_number": 1,
+    "page_total": 2,
+    "voting_district": "86820598",
+    "province": "North West",
+    "municipality": "NW396",
+    "station_name": "BRITTEN",
+    "registered_voters": 165,
+    "votes": {
+      "ANC": 9,
+      "DA": 18,
+      "EFF": 6,
+      "M.K.": 1,
+      "ACTIONSA": 18
+    }
+  },
+  "image1.jpg": {
+    "template": "iec_slip",
+    "barcode_text": "001335868205982011",
+    "ballot_type": "Provincial",
+    "page_number": 1,
+    "page_total": 2,
+    "voting_district": "86820598",
+    "province": "North West",
+    "municipality": "NW396",
+    "station_name": "BRITTEN",
+    "registered_voters": 165,
+    "votes": {
+      "ANC": 9,
+      "DA": 18,
+      "EFF": 6,
+      "M.K.": 1,
+      "ACTIONSA": 18
+    }
   }
 }

@@ -34,7 +34,7 @@ class ExportService:
             "Slip ID", "Reference", "Ballot Type", "Election", "Province", "Municipality",
             "Voting District", "Station Name", "Registered Voters", "Status",
             "Valid Votes", "Spoilt Votes", "Total Votes Cast", "Special Votes",
-            "Pages Expected", "Pages Received", "Approved By", "Approved At", "Created At"
+            "Pages Expected", "Pages Received", "Approved By", "Approved At", "Uploaded At"
         ])
 
         for s in slips:

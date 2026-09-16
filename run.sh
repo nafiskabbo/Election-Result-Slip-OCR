@@ -67,14 +67,25 @@ Usage: ./run.sh [command]
 Commands:
   start       Start the API (default)
   test        Accuracy-check every photo in sample_slips/, then run pytest
-  accuracy    Accuracy-check every photo in sample_slips/ (raw OCR, no lookup)
+  accuracy    Accuracy-check sample_slips/; writes storage/accuracy_report.md
+  digit-export  Export RESULT cell crops for digit fine-tune
+  digit-train   Train MNIST/EMNIST digit CNN (hard augment; no handwriting unless confirmed)
   help        Show this help
 
 Examples:
   ./run.sh
   ./run.sh test
-  ./run.sh accuracy --with-known
+  ./run.sh accuracy
+  ./run.sh accuracy --raw-ocr
+  ./run.sh accuracy --raw-ocr --rapidocr-model both
+  ./run.sh accuracy --raw-ocr --compare-vote-path
+  ./run.sh accuracy --raw-ocr --compare-digit-cnn
   ./run.sh accuracy --fail-under 95
+  ./run.sh accuracy --out /tmp/accuracy_report.md
+  ./run.sh digit-export
+  ./run.sh digit-train --epochs 5
+  # After you confirm handwriting fine-tune:
+  ./run.sh digit-train --include-handwriting --i-confirm-handwriting
 EOF
 }
 
@@ -127,6 +138,20 @@ case "$cmd" in
   accuracy)
     ensure_venv
     run_accuracy "$@"
+    ;;
+  digit-export)
+    ensure_venv
+    echo "Exporting RESULT digit cells..."
+    venv/bin/python -m backend.digit_finetune.export_result_cells "$@"
+    ;;
+  digit-train)
+    ensure_venv
+    if ! venv/bin/python -c "import torch, torchvision" >/dev/null 2>&1; then
+      echo "Installing training deps..."
+      venv/bin/python -m pip install -r requirements-train.txt
+    fi
+    echo "Training digit CNN (MNIST/EMNIST + hard augment)..."
+    venv/bin/python -m backend.digit_finetune.train_digit_cnn "$@"
     ;;
   help|-h|--help)
     usage

@@ -85,6 +85,7 @@ class SlipSummaryResponse(BaseModel):
     total_received_pages: int
     created_at: str
     updated_at: str
+    uploaded_at: Optional[str] = None
     approved_at: Optional[str] = None
     approved_by: Optional[str] = None
     rejection_reason: Optional[str] = None

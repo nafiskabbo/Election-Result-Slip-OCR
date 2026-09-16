@@ -2,7 +2,27 @@ import cv2
 import numpy as np
 import re
 from typing import Dict, Any, List, Optional, Tuple
-from rapidocr_onnxruntime import RapidOCR
+from rapidocr import ModelType, OCRVersion, RapidOCR
+
+
+def build_rapid_ocr(model_size: str = "small") -> RapidOCR:
+    """Build RapidOCR with PP-OCRv6 det+rec at the given size (small|medium).
+
+    Docs: https://rapidai.github.io/RapidOCRDocs/main/install_usage/rapidocr/usage/
+    Default production size is small (fast enough; same field accuracy as medium).
+    """
+    size = (model_size or "small").strip().lower()
+    if size not in {"small", "medium"}:
+        raise ValueError(f"Unsupported RapidOCR model size: {model_size!r}")
+    model_type = ModelType.MEDIUM if size == "medium" else ModelType.SMALL
+    return RapidOCR(
+        params={
+            "Det.model_type": model_type,
+            "Rec.model_type": model_type,
+            "Det.ocr_version": OCRVersion.PPOCRV6,
+            "Rec.ocr_version": OCRVersion.PPOCRV6,
+        }
+    )
 
 from backend.digit_icr import (
     RESULT_BOXES,
@@ -28,6 +48,32 @@ PROVINCES = [
 
 # Row order as printed on 2024 IEC result slips. Multiple layouts exist per
 # ballot type/page because the party list is provincial.
+LAYOUT_PROVINCIAL_P1_WC = [
+    ("ALLIANCE OF CITIZENS FOR CHANGE", "A.C.C."),
+    ("ALLIED MOVEMENT FOR CHANGE", "AM4C"),
+    ("ARISE SOUTH AFRICA", "ASA"),
+    ("AZANIA PEACEFUL REVOLUTION", "AZANIA"),
+    ("AFRICAN NATIONAL CONGRESS", "ANC"),
+    ("BUILD ONE SOUTH AFRICA WITH MMUSI MAIMANE", "BOSA"),
+    ("CONGRESS OF THE PEOPLE", "COPE"),
+    ("DEMOCRATIC ALLIANCE", "DA"),
+    ("ECONOMIC FREEDOM FIGHTERS", "EFF"),
+    ("GOOD", "GOOD"),
+    ("INKATHA FREEDOM PARTY", "IFP"),
+    ("LAND PARTY", "LAND"),
+    ("NATIONAL COLOURED CONGRESS", "CCC"),
+    ("OPERATION DUDULA", "O.D"),
+    ("PAN AFRICANIST CONGRESS OF AZANIA", "PAC"),
+    ("PATRIOTIC ALLIANCE", "PA"),
+    ("PEOPLE'S MOVEMENT FOR CHANGE", "PMC"),
+    ("REFERENDUM PARTY", "RP"),
+    ("RISE MZANSI", "RISE"),
+    ("SIZWE UMMAH NATION", "SUN"),
+    ("UMKHONTO WESIZWE", "M.K."),
+    ("UNITED DEMOCRATIC MOVEMENT", "UDM"),
+    ("VRYHEIDSFRONT PLUS", "VF PLUS"),
+]
+
 LAYOUT_PROVINCIAL_P1 = [
     ("ARISE SOUTH AFRICA", "ASA"),
     ("AFRICAN NATIONAL CONGRESS", "ANC"),
@@ -200,7 +246,7 @@ LAYOUT_NATIONAL_P3 = [
 ]
 
 PARTY_LAYOUTS = {
-    ("Provincial", 1): [LAYOUT_PROVINCIAL_P1],
+    ("Provincial", 1): [LAYOUT_PROVINCIAL_P1, LAYOUT_PROVINCIAL_P1_WC],
     ("Provincial", 2): [LAYOUT_NATIONAL_P3],
     ("Regional", 1): [LAYOUT_REGIONAL_P1_LP, LAYOUT_REGIONAL_P1_NW],
     ("Regional", 2): [LAYOUT_REGIONAL_P2_LP, LAYOUT_REGIONAL_P2_NW],
@@ -213,8 +259,34 @@ PARTY_LAYOUTS = {
 # Verified from the photographs in sample_slips/. Used when the barcode is read
 # so handwritten 4-box digits are not lost to OCR noise (demo / --with-known).
 KNOWN_SLIPS = {
+    "001335970900502011": {
+        "votes": {
+            "A.C.C.": 1,
+            "AM4C": 2,
+            "ASA": 2,
+            "ANC": 51,
+            "BOSA": 15,
+            "DA": 816,
+            "EFF": 41,
+            "GOOD": 27,
+            "IFP": 1,
+            "CCC": 1,
+            "PAC": 1,
+            "PA": 7,
+            "RP": 2,
+            "RISE": 52,
+            "SUN": 1,
+            "M.K.": 6,
+            "UDM": 3,
+            "VF PLUS": 22,
+        },
+        "station": "SEA POINT PRIMARY SCHOOL",
+        "province": "Western Cape",
+        "municipality": "CPT - City of Cape Town",
+        "registered_voters": 3080,
+    },
     "001335868205982011": {
-        "votes": {"ANC": 19, "DA": 18, "EFF": 6, "M.K.": 1, "ACTIONSA": 18},
+        "votes": {"ANC": 9, "DA": 18, "EFF": 6, "M.K.": 1, "ACTIONSA": 18},
         "station": "BRITTEN STATION SHOP",
         "province": "North West",
         "municipality": "NW396 - Lekwa-Teemane",
@@ -311,8 +383,17 @@ def parse_vote_digits(text: str) -> Optional[int]:
 
 
 class OCREngine:
-    def __init__(self):
-        self.rapid_ocr = RapidOCR()
+    def __init__(self, rapidocr_model: str = "small"):
+        self.rapidocr_model = (rapidocr_model or "small").strip().lower()
+        self.rapid_ocr = build_rapid_ocr(self.rapidocr_model)
+        self._box_rapid_ocr = None
+
+    def _get_box_rapid_ocr(self):
+        if self._box_rapid_ocr is None:
+            from backend.result_box_ocr import build_box_rapid_ocr
+
+            self._box_rapid_ocr = build_box_rapid_ocr(self.rapidocr_model)
+        return self._box_rapid_ocr
 
     def parse_barcode_reference(self, text: str, header_vd: Optional[str] = None) -> Optional[Dict[str, Any]]:
         digits = re.sub(r"\D", "", text or "")
@@ -440,14 +521,25 @@ class OCREngine:
             work = cv2.resize(img, (int(round(w * scale)), int(round(h * scale))), interpolation=cv2.INTER_AREA)
         scale_x = w / float(work.shape[1])
         scale_y = h / float(work.shape[0])
-        ocr_results, _ = self.rapid_ocr(work)
+        raw = self.rapid_ocr(work)
         ocr_boxes = []
         full_text_lines = []
-        if ocr_results:
-            for box, text, score in ocr_results:
+        # rapidocr 3.x returns RapidOCROutput; 1.x returned (boxes, elapse).
+        if hasattr(raw, "boxes") and hasattr(raw, "txts"):
+            boxes = raw.boxes if raw.boxes is not None else []
+            txts = raw.txts or ()
+            scores = raw.scores or ()
+            for box, text, score in zip(boxes, txts, scores):
                 mapped = [[float(p[0]) * scale_x, float(p[1]) * scale_y] for p in box]
                 ocr_boxes.append({"box": mapped, "text": text, "score": float(score)})
                 full_text_lines.append(text)
+        else:
+            ocr_results = raw[0] if isinstance(raw, (list, tuple)) else None
+            if ocr_results:
+                for box, text, score in ocr_results:
+                    mapped = [[float(p[0]) * scale_x, float(p[1]) * scale_y] for p in box]
+                    ocr_boxes.append({"box": mapped, "text": text, "score": float(score)})
+                    full_text_lines.append(text)
         return ocr_boxes, full_text_lines
 
     def _ocr_region(
@@ -679,6 +771,8 @@ class OCREngine:
         img: np.ndarray,
         use_known: bool = False,
         binary: Optional[np.ndarray] = None,
+        digit_backend: str = "heuristic",
+        also_cnn_votes: bool = False,
     ) -> Dict[str, Any]:
         img = self.upright_image(img)
         if binary is not None:
@@ -777,12 +871,13 @@ class OCREngine:
                 for i in range(num_rows)
             ]
 
+        # RESULT column: higher upscale + binary pass help faint handwritten digits.
         vote_boxes, vote_lines = self._ocr_region(
-            img, table_top, res_col_left, table_bottom, res_col_right, upscale_to=720
+            img, table_top, res_col_left, table_bottom, res_col_right, upscale_to=960
         )
         if binary is not None:
             bin_boxes, bin_lines = self._ocr_region(
-                binary, table_top, res_col_left, table_bottom, res_col_right, upscale_to=720
+                binary, table_top, res_col_left, table_bottom, res_col_right, upscale_to=960
             )
             vote_boxes = vote_boxes + bin_boxes
             vote_lines = vote_lines + bin_lines
@@ -800,21 +895,81 @@ class OCREngine:
             r_y1, r_y2 = aligned_rows[r_idx]
             pad = max(1, int((r_y2 - r_y1) * 0.04))
             row_img = img[r_y1 + pad : max(r_y1 + pad + 1, r_y2 - pad), res_col_left:res_col_right]
-            votes, conf, _digits = read_four_blocks(row_img)
+            votes, conf, _digits = read_four_blocks(row_img, backend=digit_backend)
+            cnn_votes = cnn_conf = None
+            if also_cnn_votes and digit_backend != "cnn":
+                cnn_votes, cnn_conf, _ = read_four_blocks(row_img, backend="cnn")
 
-            # Only fall back to blob OCR for faint marks when the 4-block read
-            # is empty and RapidOCR found a small, plausible total.
-            if votes == 0 and conf >= 0.70:
+            # RapidOCR-only path: ignore heuristic ICR; use column + digit-tuned row OCR.
+            if digit_backend == "rapid":
                 ocr_votes, ocr_conf = self._votes_from_ocr_row(
                     vote_boxes, r_y1, r_y2, res_col_left, res_col_right
                 )
-                if (
-                    ocr_votes
-                    and ocr_votes <= 20
-                    and ocr_conf >= 0.70
+                from backend.result_box_ocr import read_result_row_rapid, row_ink_density
+
+                if row_ink_density(row_img) >= 0.008 or ocr_votes:
+                    box_votes, box_conf = read_result_row_rapid(
+                        self._get_box_rapid_ocr(),
+                        row_img,
+                        registered_voters=registered_voters,
+                    )
+                    if box_conf >= ocr_conf and (box_votes or box_conf > ocr_conf):
+                        ocr_votes, ocr_conf = box_votes, box_conf
+                if ocr_votes and (
+                    not registered_voters or ocr_votes <= registered_voters
+                ):
+                    votes, conf = ocr_votes, min(0.70, max(ocr_conf, 0.45))
+                else:
+                    votes, conf = 0, 0.55
+
+            # Hybrid path: heuristic ICR + RapidOCR RESULT-box fusion.
+            elif digit_backend == "heuristic":
+                ocr_votes, ocr_conf = self._votes_from_ocr_row(
+                    vote_boxes, r_y1, r_y2, res_col_left, res_col_right
+                )
+                need_box = (
+                    conf < LOW_VOTE_CONFIDENCE
+                    or votes >= 100
+                    or (votes == 0 and conf >= 0.70)
+                )
+                if need_box:
+                    from backend.result_box_ocr import read_result_row_rapid, row_ink_density
+
+                    # Skip expensive per-row OCR when the cell band has almost no ink.
+                    if votes >= 100 or conf < LOW_VOTE_CONFIDENCE or row_ink_density(row_img) >= 0.012:
+                        box_votes, box_conf = read_result_row_rapid(
+                            self._get_box_rapid_ocr(),
+                            row_img,
+                            registered_voters=registered_voters,
+                        )
+                        if box_conf >= ocr_conf and box_votes:
+                            ocr_votes, ocr_conf = box_votes, box_conf
+
+                use_rapid = False
+                if votes == 0 and conf >= 0.70 and ocr_votes and ocr_conf >= 0.55:
+                    use_rapid = True
+                elif conf < LOW_VOTE_CONFIDENCE and ocr_votes and ocr_conf >= 0.55:
+                    use_rapid = True
+                elif (
+                    votes >= 100
+                    and ocr_votes
+                    and ocr_votes < 100
+                    and ocr_conf >= 0.50
                     and (not registered_voters or ocr_votes <= registered_voters)
                 ):
-                    votes, conf = ocr_votes, min(0.68, ocr_conf)
+                    use_rapid = True
+
+                if use_rapid and (
+                    not registered_voters or ocr_votes <= registered_voters
+                ):
+                    votes, conf = ocr_votes, min(0.70, max(ocr_conf, 0.55))
+                elif (
+                    votes >= 100
+                    and (not registered_voters or votes > registered_voters)
+                    and (not ocr_votes or ocr_conf < 0.55)
+                ):
+                    # Dashed Ø boxes often invent multi-hundred totals; drop unconfirmed.
+                    votes, conf = 0, min(conf, 0.40)
 
             if use_known and p_code in known_votes:
                 votes = int(known_votes[p_code])
@@ -829,7 +984,7 @@ class OCREngine:
 
             sig_crop = img[r_y1:r_y2, sig_col_left:sig_col_right]
             sig_detected, _ = self.detect_signature_presence(sig_crop)
-            party_results.append({
+            row_out = {
                 "row_index": r_idx,
                 "party_name": p_name,
                 "party_code": p_code,
@@ -845,7 +1000,11 @@ class OCREngine:
                     "height": r_y2 - r_y1,
                 },
                 "_vote_overflow": exception_flag_vote_overflow,
-            })
+            }
+            if cnn_votes is not None:
+                row_out["cnn_votes"] = int(cnn_votes)
+                row_out["cnn_confidence"] = float(cnn_conf or 0.0)
+            party_results.append(row_out)
 
         if use_known:
             known_codes = set(known_votes)

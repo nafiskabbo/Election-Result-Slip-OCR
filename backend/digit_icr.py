@@ -285,45 +285,78 @@ def classify_digit_mask(mask: np.ndarray) -> Tuple[Optional[int], float]:
     return None, 0.35
 
 
-def digits_to_votes(digits: List[Optional[int]]) -> Tuple[int, float]:
-    """Left-aligned 4-block digits → integer votes + mean confidence."""
-    vals = list(digits[:RESULT_BOXES])
-    while vals and vals[-1] is None:
-        vals.pop()
-    if not vals:
+def digits_to_votes(digits: List[Optional[int]], *, leading_zeros: bool = False) -> Tuple[int, float]:
+    """4-box digits → integer votes + confidence.
+
+    Empty leading boxes (no written zero) are ignored so right-aligned totals
+    like ``[_, _, _, 9]`` read as 9 and ``[_, 8, 1, 6]`` as 816.
+
+    ``leading_zeros=True`` (CNN) also drops leading literal 0s that come from
+    Ø/blank cells misclassified as zero.
+    """
+    raw = list(digits[:RESULT_BOXES])
+    while len(raw) < RESULT_BOXES:
+        raw.append(None)
+
+    idxs = [i for i, d in enumerate(raw) if d is not None]
+    if not idxs:
         return 0, 0.90
 
     # Interior gaps are almost always dashed-line noise, not real digits.
-    if any(d is None for d in vals):
-        return 0, 0.40
+    for i in range(idxs[0], idxs[-1] + 1):
+        if raw[i] is None:
+            return 0, 0.40
 
-    # Lone first-cell 5–9 is nearly always a misread slashed zero (Ø).
-    if len(vals) == 1 and vals[0] in {5, 6, 7, 8, 9}:
+    vals = [int(raw[i]) for i in range(idxs[0], idxs[-1] + 1)]
+
+    # Lone 5–9 only in the leftmost box is nearly always a misread slashed zero (Ø).
+    # A lone digit in a later box (no zero in front) is a real single-digit total.
+    if len(vals) == 1 and vals[0] in {5, 6, 7, 8, 9} and idxs[0] == 0:
         return 0, 0.55
 
-    parts = [int(d) for d in vals]
-    if all(p == 0 for p in parts):
+    # Drop leading zeros so Ø/blank-as-0 does not inflate place value.
+    # Empty leading boxes stay None and are already excluded via idxs.
+    while len(vals) > 1 and vals[0] == 0:
+        vals.pop(0)
+
+    if all(p == 0 for p in vals):
         return 0, 0.88
-    value = int("".join(str(p) for p in parts))
-    return value, 0.80
+    return int("".join(str(p) for p in vals)), 0.80
 
 
-def read_four_blocks(row_bgr: np.ndarray) -> Tuple[int, float, List[Optional[int]]]:
-    """OCR one RESULT row that contains four digit boxes."""
+def read_four_blocks(
+    row_bgr: np.ndarray,
+    backend: str = "heuristic",
+) -> Tuple[int, float, List[Optional[int]]]:
+    """OCR one RESULT row that contains four digit boxes.
+
+    backend:
+      - \"heuristic\": topology ICR (production hybrid path)
+      - \"cnn\": MNIST/EMNIST+blank ONNX digit classifier
+      - \"rapid\": skip cell ICR (caller uses RapidOCR only)
+    """
+    if backend == "rapid":
+        return 0, 0.90, [None, None, None, None]
     if row_bgr is None or row_bgr.size == 0:
         return 0, 0.2, [None, None, None, None]
     h, w = row_bgr.shape[:2]
     digits: List[Optional[int]] = []
     confs: List[float] = []
+    use_cnn = backend == "cnn"
     for c in range(RESULT_BOXES):
         x1 = int(w * c / RESULT_BOXES)
         x2 = int(w * (c + 1) / RESULT_BOXES)
         cell = row_bgr[:, x1:x2]
-        mask = _cell_mask(cell)
-        digit, conf = classify_digit_mask(mask)
+        if use_cnn:
+            from backend.digit_cnn import classify_cell_cnn
+
+            digit, conf = classify_cell_cnn(cell)
+        else:
+            mask = _cell_mask(cell)
+            digit, conf = classify_digit_mask(mask)
         digits.append(digit)
         confs.append(conf)
-    votes, base = digits_to_votes(digits)
+    votes, base = digits_to_votes(digits, leading_zeros=use_cnn)
     conf = float(sum(confs) / max(1, len(confs)))
     # Prefer lower confidence when any cell was uncertain.
     conf = min(conf, base)
