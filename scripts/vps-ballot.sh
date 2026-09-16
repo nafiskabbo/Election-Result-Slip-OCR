@@ -33,6 +33,9 @@ deploy() {
     --exclude 'storage/raw/*' \
     --exclude 'storage/enhanced/*' \
     --exclude 'storage/thumbnails/*' \
+    --exclude 'backend/digit_finetune/data' \
+    --exclude 'backend/digit_finetune/runs' \
+    --exclude '__pycache__' \
     --exclude '.agents' \
     --exclude '.cursor' \
     --exclude '.env' \
