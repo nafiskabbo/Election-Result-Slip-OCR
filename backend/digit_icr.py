@@ -40,6 +40,19 @@ def detect_table_row_lines(gray: np.ndarray, x1: int, x2: int, y1: int, y2: int)
                 peaks.append(y)
             elif proj_s[y] > proj_s[peaks[-1]]:
                 peaks[-1] = y
+    if len(peaks) >= 4:
+        gaps = np.diff(peaks)
+        row_like = gaps[gaps >= 16]
+        if row_like.size:
+            merge_distance = max(7, int(round(float(np.median(row_like)) * 0.35)))
+            merged: List[int] = []
+            for peak in peaks:
+                if merged and peak - merged[-1] <= merge_distance:
+                    if proj_s[peak] > proj_s[merged[-1]]:
+                        merged[-1] = peak
+                else:
+                    merged.append(peak)
+            peaks = merged
     return [y + y1 for y in peaks]
 
 
@@ -100,8 +113,10 @@ def _cell_mask(cell: np.ndarray) -> np.ndarray:
         if area < 35:
             continue
         aspect = bh / float(max(1, bw))
-        # Drop thin vertical dashed dividers and short horizontal border crumbs.
-        if bw <= 7 and aspect > 2.5:
+        cx = (x + bw / 2.0) / float(th.shape[1])
+        # Keep centered thin strokes: they are real handwritten 1s. Only remove
+        # divider remnants hugging a cell edge.
+        if bw <= 7 and aspect > 2.5 and (cx < 0.20 or cx > 0.80):
             continue
         if bh <= 7 and bw > 35:
             continue
@@ -398,6 +413,18 @@ def align_rows_to_template(
 
     if len(row_lines) >= 2:
         top, bottom = row_lines[0], row_lines[-1]
-        step = (bottom - top) / float(num_rows)
+        gaps = np.diff(row_lines).astype(float)
+        positive_gaps = gaps[gaps > 3.0]
+        median_gap = float(np.median(positive_gaps)) if positive_gaps.size else 0.0
+        observed_intervals = (
+            (bottom - top) / median_gap if median_gap > 0 else float(num_rows)
+        )
+        # A partially detected contiguous grid must be extrapolated, not
+        # compressed into all template rows. This is common on perspective
+        # phone captures where faint lower rules disappear.
+        if median_gap > 0 and observed_intervals < num_rows * 0.82:
+            step = median_gap
+        else:
+            step = (bottom - top) / float(num_rows)
         return [(int(top + i * step), int(top + (i + 1) * step)) for i in range(num_rows)]
     return []

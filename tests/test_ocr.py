@@ -71,6 +71,43 @@ def test_digits_to_votes_aligned():
     assert digits_to_votes([None, None, None, 1])[0] == 1
 
 
+def test_centered_thin_one_is_not_removed_as_divider():
+    import numpy as np
+    from backend.digit_icr import _cell_mask, classify_digit_mask
+
+    cell = np.full((80, 50, 3), 255, dtype=np.uint8)
+    cv2.line(cell, (25, 18), (25, 64), (0, 0, 0), 4)
+    digit, confidence = classify_digit_mask(_cell_mask(cell))
+    assert digit == 1
+    assert confidence >= 0.8
+
+
+def test_partial_row_grid_is_extrapolated_not_compressed():
+    from backend.digit_icr import align_rows_to_template
+
+    rows = align_rows_to_template(list(range(100, 270, 10)), num_rows=23)
+    assert len(rows) == 23
+    assert rows[0] == (100, 110)
+    assert rows[-1] == (320, 330)
+
+
+def test_limpopo_provincial_layouts_match_printed_rows(ocr_engine):
+    page1 = ocr_engine._choose_layout(
+        "Provincial",
+        1,
+        ["BOLSHEVIKS PARTY OF SOUTH AFRICA BPSA", "SAMEBA", "SADA"],
+    )
+    page2 = ocr_engine._choose_layout(
+        "Provincial",
+        2,
+        ["UDM VF PLUS ACTIONSA ACDP AMC APC ATM ALJAMA ACP"],
+    )
+    assert [code for _, code in page1][2] == "BPSA"
+    assert [code for _, code in page1][-2:] == ["M.K.", "UAT"]
+    assert [code for _, code in page2][:2] == ["UDM", "VF PLUS"]
+    assert [code for _, code in page2][-2:] == ["ALJAMA", "ACP"]
+
+
 def test_limpopo_national_page_2(ocr_engine, enhancer):
     data = _extract(ocr_engine, enhancer, "sample_slips/p_2.jpg")
     assert data["ballot_type"] == "National"

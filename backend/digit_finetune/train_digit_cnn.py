@@ -27,7 +27,12 @@ ROOT = Path(__file__).resolve().parents[2]
 if str(ROOT) not in sys.path:
     sys.path.insert(0, str(ROOT))
 
-from backend.digit_finetune.hard_augment import BLANK_CLASS, hard_augment_digit, make_blank_canvas
+from backend.digit_finetune.hard_augment import (
+    BLANK_CLASS,
+    hard_augment_digit,
+    ink_on_black,
+    make_blank_canvas,
+)
 
 MODELS_DIR = Path(__file__).resolve().parents[1] / "models"
 DEFAULT_OUT_ONNX = MODELS_DIR / "digit_cnn_mnist_emnist_aug_v1.onnx"
@@ -123,14 +128,14 @@ def _load_public_pairs(torchvision, max_per_class: int) -> List[Tuple[np.ndarray
     return capped
 
 
-def _load_handwriting_pairs(cells_dir: Path) -> List[Tuple[np.ndarray, int]]:
+def _load_handwriting_pairs(cells_dir: Path) -> List[Tuple[np.ndarray, int, str]]:
     man_path = cells_dir / "manifest.json"
     if not man_path.exists():
         raise SystemExit(f"No cell manifest at {man_path}. Run export_result_cells first.")
     payload = json.loads(man_path.read_text(encoding="utf-8"))
-    pairs: List[Tuple[np.ndarray, int]] = []
+    pairs: List[Tuple[np.ndarray, int, str]] = []
     for entry in payload.get("cells") or []:
-        if entry.get("label_source") != "gold_decompose":
+        if entry.get("label_source") != "manual_cell":
             continue
         label = entry.get("label")
         path = cells_dir / entry["file"]
@@ -139,11 +144,12 @@ def _load_handwriting_pairs(cells_dir: Path) -> List[Tuple[np.ndarray, int]]:
         cell = cv2.imread(str(path), cv2.IMREAD_GRAYSCALE)
         if cell is None:
             continue
+        source = str(entry.get("source_image") or entry["file"])
         if label is None:
-            pairs.append((cell, BLANK_CLASS))
+            pairs.append((cell, BLANK_CLASS, source))
         else:
-            pairs.append((cell, int(label)))
-    print(f"Loaded {len(pairs)} gold-decomposed handwriting cells from {cells_dir}")
+            pairs.append((cell, int(label), source))
+    print(f"Loaded {len(pairs)} manually labeled handwriting cells from {cells_dir}")
     return pairs
 
 
@@ -171,12 +177,31 @@ def train(
         )
 
     pairs = _load_public_pairs(torchvision, max_per_class=max_per_class)
+    n = len(pairs)
+    n_val = max(500, int(n * 0.08))
+    val_items = pairs[:n_val]
+    train_items = pairs[n_val:]
+
     if include_handwriting and confirm_handwriting:
         hw = _load_handwriting_pairs(cells_dir)
-        # Oversample handwriting so it is not drowned by MNIST.
+        sources = sorted({source for _, _, source in hw})
+        if len(sources) < 3:
+            raise SystemExit(
+                "IEC handwriting training needs manually labeled cells from at least "
+                "3 source images so validation does not leak handwriting from training."
+            )
+        random.shuffle(sources)
+        n_val_sources = max(1, int(round(len(sources) * 0.2)))
+        val_sources = set(sources[:n_val_sources])
+        hw_train = [(img, lab) for img, lab, source in hw if source not in val_sources]
+        hw_val = [(img, lab) for img, lab, source in hw if source in val_sources]
+        if not hw_train or not hw_val:
+            raise SystemExit("Could not create non-overlapping IEC train/validation splits.")
+        # Oversample only the training handwriting so validation remains independent.
         for _ in range(8):
-            pairs.extend(hw)
-        random.shuffle(pairs)
+            train_items.extend(hw_train)
+        val_items.extend(hw_val)
+        random.shuffle(train_items)
 
     class AugDataset(Dataset):
         def __init__(self, items):
@@ -192,12 +217,25 @@ def train(
             y = torch.tensor(lab2, dtype=torch.long)
             return x, y
 
-    n = len(pairs)
-    n_val = max(500, int(n * 0.08))
-    val_items = pairs[:n_val]
-    train_items = pairs[n_val:]
+    class EvalDataset(Dataset):
+        """Deterministic validation preprocessing; never score random augmentation."""
+
+        def __init__(self, items):
+            self.items = items
+
+        def __len__(self):
+            return len(self.items)
+
+        def __getitem__(self, idx):
+            img, lab = self.items[idx]
+            clean = ink_on_black(img)
+            if clean.shape != (28, 28):
+                clean = cv2.resize(clean, (28, 28), interpolation=cv2.INTER_AREA)
+            x = torch.from_numpy(clean.astype(np.float32) / 255.0).unsqueeze(0)
+            return x, torch.tensor(int(lab), dtype=torch.long)
+
     train_loader = DataLoader(AugDataset(train_items), batch_size=batch_size, shuffle=True, num_workers=0)
-    val_loader = DataLoader(AugDataset(val_items), batch_size=batch_size, shuffle=False, num_workers=0)
+    val_loader = DataLoader(EvalDataset(val_items), batch_size=batch_size, shuffle=False, num_workers=0)
 
     device = torch.device("cuda" if torch.cuda.is_available() else "cpu")
     model = build_model(nn).to(device)
@@ -272,7 +310,7 @@ def main(argv: Optional[List[str]] = None) -> int:
     p.add_argument(
         "--include-handwriting",
         action="store_true",
-        help="Include gold-decomposed sample_slips cells (requires confirmation flag).",
+        help="Include manually labeled sample_slips cells (requires confirmation flag).",
     )
     p.add_argument(
         "--i-confirm-handwriting",

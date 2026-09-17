@@ -1,8 +1,4 @@
-"""Per-page extract path shared by Upload and the accuracy command.
-
-The operator desk calls this sequence on every uploaded file. Accuracy must
-use the same function so reports match what Review shows (when use_known=True).
-"""
+"""Per-page raw OCR path shared by Upload and the accuracy command."""
 
 from __future__ import annotations
 
@@ -19,15 +15,11 @@ def extract_page_from_file(
     *,
     enhancer: Optional[ImageEnhancer] = None,
     ocr_engine: Optional[OCREngine] = None,
-    use_known: bool = True,
     digit_backend: Optional[str] = None,
     also_cnn_votes: bool = False,
     rapidocr_model: Optional[str] = None,
 ) -> Tuple[ImageEnhancementResult, dict]:
     """Load, enhance, and OCR one page the same way POST /api/upload does.
-
-    ``use_known=True`` is the production default (KNOWN_SLIPS after a barcode
-    read). Pass False only to score raw OCR without that lookup.
 
     ``also_cnn_votes`` runs the MNIST/EMNIST digit CNN in parallel for accuracy
     compare tables (does not change the primary ``votes`` field unless
@@ -45,7 +37,6 @@ def extract_page_from_file(
     enh_res = enhancer.process_image(cv_img)
     extracted = ocr_engine.extract_full_slip_data(
         enh_res.enhanced_image,
-        use_known=use_known,
         binary=enh_res.binary_image,
         digit_backend=digit_backend,
         also_cnn_votes=also_cnn_votes,

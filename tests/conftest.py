@@ -17,7 +17,7 @@ def _postgres_ready() -> bool:
         return False
 
 
-def pytest_sessionstart(session):
+def _ensure_postgres():
     if _postgres_ready():
         return
     subprocess.run(["docker", "compose", "up", "-d", "db"], check=True)
@@ -36,6 +36,7 @@ def pytest_sessionfinish(session, exitstatus):
 
 @pytest.fixture
 def postgres_db():
+    _ensure_postgres()
     init_db()
     truncate_operational_tables()
     yield

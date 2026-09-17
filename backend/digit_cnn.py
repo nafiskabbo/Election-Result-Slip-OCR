@@ -102,7 +102,8 @@ def cell_to_mnist_tensor(cell_bgr: np.ndarray) -> Tuple[np.ndarray, float]:
         if area < 28:
             continue
         aspect = bh / float(max(1, bw))
-        if bw <= 5 and aspect > 2.5:
+        cx = (x + bw / 2.0) / float(out.shape[1])
+        if bw <= 5 and aspect > 2.5 and (cx < 0.20 or cx > 0.80):
             continue
         if bh <= 5 and bw > 16:
             continue

@@ -90,7 +90,7 @@ class ImageEnhancer:
 
         for c in contours:
             area = cv2.contourArea(c)
-            # Must occupy at least 65% of frame to be the full paper sheet
+            # Must occupy at least 65% of frame to be the full paper sheet.
             if area < img_area * 0.65:
                 continue
 
@@ -257,16 +257,13 @@ class ImageEnhancer:
         """Rotate phone photos so the coloured header bar sits at the top."""
         h, w = img.shape[:2]
         if w > h:
-            portraits = [
+            candidates = [
                 cv2.rotate(img, cv2.ROTATE_90_CLOCKWISE),
                 cv2.rotate(img, cv2.ROTATE_90_COUNTERCLOCKWISE),
             ]
         else:
-            return img
-        candidates = []
-        for cand in portraits:
-            candidates.append(cand)
-            candidates.append(cv2.rotate(cand, cv2.ROTATE_180))
+            # Portrait phone photos can still arrive upside down.
+            candidates = [img, cv2.rotate(img, cv2.ROTATE_180)]
         scored = [(self.header_bar_score(cand), cand) for cand in candidates]
         scored.sort(key=lambda item: item[0], reverse=True)
         return scored[0][1]

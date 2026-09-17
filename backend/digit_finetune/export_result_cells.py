@@ -1,7 +1,8 @@
-"""Export RESULT digit cells from sample_slips for later handwriting fine-tune.
+"""Export RESULT digit cells from sample slips for manual IEC annotation.
 
-Labels from gold are auto-decomposed (left-pad blanks). Do NOT train on these
-until you pass ``--i-confirm-handwriting`` to train_digit_cnn.py.
+Row totals cannot safely be decomposed into cells because real forms use both
+leading slashed-zero and trailing-blank conventions. Cell labels are therefore
+accepted only from an explicit ``vote_cells`` map in the gold fixture.
 """
 
 from __future__ import annotations
@@ -26,20 +27,19 @@ GOLD_PATH = ROOT / "tests" / "fixtures" / "sample_gold.json"
 SAMPLE_DIR = ROOT / "sample_slips"
 
 
-def votes_to_cell_labels(votes: int) -> List[Optional[int]]:
-    """Map an integer vote total onto 4 boxes (leading blanks).
-
-    Example: 9 → [None, None, None, 9], 18 → [None, None, 1, 8], 0 → four blanks.
-    """
-    if votes is None or votes < 0:
-        return [None] * RESULT_BOXES
-    if votes == 0:
-        return [None] * RESULT_BOXES
-    digits = [int(c) for c in str(int(votes))]
-    if len(digits) > RESULT_BOXES:
-        digits = digits[-RESULT_BOXES:]
-    pad = RESULT_BOXES - len(digits)
-    return [None] * pad + digits
+def validate_cell_labels(labels: Any) -> Optional[List[Optional[int]]]:
+    """Validate one manually annotated four-cell sequence."""
+    if not isinstance(labels, list) or len(labels) != RESULT_BOXES:
+        return None
+    normalized: List[Optional[int]] = []
+    for label in labels:
+        if label is None:
+            normalized.append(None)
+        elif isinstance(label, int) and 0 <= label <= 9:
+            normalized.append(label)
+        else:
+            return None
+    return normalized
 
 
 def export_cells(
@@ -61,7 +61,6 @@ def export_cells(
         try:
             enh, extracted = extract_page_from_file(
                 str(path),
-                use_known=False,
                 rapidocr_model=rapidocr_model,
             )
         except Exception as exc:  # noqa: BLE001
@@ -70,6 +69,7 @@ def export_cells(
         img = enh.enhanced_image
         page_gold = gold.get(path.name) or {}
         gold_votes = page_gold.get("votes") or {}
+        vote_cells = page_gold.get("vote_cells") or {}
 
         for row in extracted.get("party_results") or []:
             code = row.get("party_code") or "UNK"
@@ -79,11 +79,8 @@ def export_cells(
             if w < 8 or h < 8:
                 continue
             row_img = img[y : y + h, x : x + w]
-            labels: Optional[List[Optional[int]]] = None
-            label_source = "unlabeled"
-            if code in gold_votes:
-                labels = votes_to_cell_labels(int(gold_votes[code]))
-                label_source = "gold_decompose"
+            labels = validate_cell_labels(vote_cells.get(code))
+            label_source = "manual_cell" if labels is not None else "unlabeled"
             for c in range(RESULT_BOXES):
                 x1 = int(w * c / RESULT_BOXES)
                 x2 = int(w * (c + 1) / RESULT_BOXES)
@@ -105,15 +102,15 @@ def export_cells(
     man_path = out_dir / "manifest.json"
     payload = {
         "note": (
-            "Handwriting fine-tune is gated. Train with MNIST/EMNIST only until you "
-            "pass --i-confirm-handwriting to train_digit_cnn.py."
+            "Only labels from explicit gold vote_cells arrays are trainable. "
+            "Sparse row totals are never auto-decomposed."
         ),
         "count": len(manifest),
         "cells": manifest,
     }
     man_path.write_text(json.dumps(payload, indent=2), encoding="utf-8")
-    labeled = sum(1 for e in manifest if e["label_source"] == "gold_decompose")
-    print(f"Wrote {len(manifest)} cells ({labeled} gold-decomposed) → {out_dir}")
+    labeled = sum(1 for e in manifest if e["label_source"] == "manual_cell")
+    print(f"Wrote {len(manifest)} cells ({labeled} manually labeled) → {out_dir}")
     print(f"Manifest: {man_path}")
     return payload
 

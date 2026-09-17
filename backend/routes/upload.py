@@ -31,7 +31,6 @@ def _process_saved_file(raw_path: str, original_filename: str, file_size: int, m
             p_idx,
             enhancer=enhancer,
             ocr_engine=ocr_engine,
-            use_known=True,
         )
 
         enh_filename = f"enh_{uuid.uuid4().hex[:10]}_{os.path.splitext(original_filename)[0]}_p{p_idx+1}.jpg"

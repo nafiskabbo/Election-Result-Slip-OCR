@@ -100,6 +100,46 @@ LAYOUT_PROVINCIAL_P1 = [
     ("AFRICAN INDEPENDENT CONGRESS", "AIC"),
 ]
 
+LAYOUT_PROVINCIAL_P1_LP = [
+    ("ARISE SOUTH AFRICA", "ASA"),
+    ("AFRICAN NATIONAL CONGRESS", "ANC"),
+    ("BOLSHEVIKS PARTY OF SOUTH AFRICA", "BPSA"),
+    ("BUILD ONE SOUTH AFRICA WITH MMUSI MAIMANE", "BOSA"),
+    ("CONGRESS OF THE PEOPLE", "COPE"),
+    ("DEMOCRATIC ALLIANCE", "DA"),
+    ("ECONOMIC FREEDOM FIGHTERS", "EFF"),
+    ("ECONOMIC LIBERATORS FORUM SOUTH AFRICA", "ELF-SA"),
+    ("FORUM 4 SERVICE DELIVERY", "F4SD"),
+    ("GOOD", "GOOD"),
+    ("INKATHA FREEDOM PARTY", "IFP"),
+    ("MOKONYANE MATSOBANE GERALD", "IND"),
+    ("NATIONAL INDEPENDENT PARTY", "NIP"),
+    ("NDOU LOVEMORE RAY", "IND2"),
+    ("OPERATION DUDULA", "O.D"),
+    ("PAN AFRICANIST CONGRESS OF AZANIA", "PAC"),
+    ("PATRIOTIC ALLIANCE", "PA"),
+    ("RISE MZANSI", "RISE"),
+    ("SOCIALIST AGENDA OF DISPOSSESSED AFRICANS", "SADA"),
+    ("SOUTH AFRICAN MAINTENANCE AND ESTATE BENEFICIARIES ASSOCIATION", "SAMEBA"),
+    ("SOUTH AFRICAN RAINBOW ALLIANCE", "SARA"),
+    ("UMKHONTO WESIZWE", "M.K."),
+    ("UNITED AFRICANS TRANSFORMATION", "UAT"),
+]
+
+LAYOUT_PROVINCIAL_P2_LP = [
+    ("UNITED DEMOCRATIC MOVEMENT", "UDM"),
+    ("VRYHEIDSFRONT PLUS", "VF PLUS"),
+    ("ABLE LEADERSHIP", "AL"),
+    ("ACTION ALLIANCE DEVELOPMENT PARTY", "AADP"),
+    ("ACTIONSA", "ACTIONSA"),
+    ("AFRICAN CHRISTIAN DEMOCRATIC PARTY", "ACDP"),
+    ("AFRICAN MOVEMENT CONGRESS", "AMC"),
+    ("AFRICAN PEOPLE'S CONVENTION", "APC"),
+    ("AFRICAN TRANSFORMATION MOVEMENT", "ATM"),
+    ("AL JAMA-AH", "ALJAMA"),
+    ("ALL CITIZENS PARTY", "ACP"),
+]
+
 LAYOUT_REGIONAL_P1_NW = [
     ("ALLIANCE OF CITIZENS FOR CHANGE", "A.C.C."),
     ("AZANIAN PEOPLE'S ORGANISATION", "AZAPO"),
@@ -246,8 +286,8 @@ LAYOUT_NATIONAL_P3 = [
 ]
 
 PARTY_LAYOUTS = {
-    ("Provincial", 1): [LAYOUT_PROVINCIAL_P1, LAYOUT_PROVINCIAL_P1_WC],
-    ("Provincial", 2): [LAYOUT_NATIONAL_P3],
+    ("Provincial", 1): [LAYOUT_PROVINCIAL_P1_LP, LAYOUT_PROVINCIAL_P1, LAYOUT_PROVINCIAL_P1_WC],
+    ("Provincial", 2): [LAYOUT_PROVINCIAL_P2_LP, LAYOUT_NATIONAL_P3],
     ("Regional", 1): [LAYOUT_REGIONAL_P1_LP, LAYOUT_REGIONAL_P1_NW],
     ("Regional", 2): [LAYOUT_REGIONAL_P2_LP, LAYOUT_REGIONAL_P2_NW],
     ("Regional", 3): [LAYOUT_NATIONAL_P3],
@@ -255,109 +295,6 @@ PARTY_LAYOUTS = {
     ("National", 2): [LAYOUT_NATIONAL_P2],
     ("National", 3): [LAYOUT_NATIONAL_P3],
 }
-
-# Verified from the photographs in sample_slips/. Used when the barcode is read
-# so handwritten 4-box digits are not lost to OCR noise (demo / --with-known).
-KNOWN_SLIPS = {
-    "001335970900502011": {
-        "votes": {
-            "A.C.C.": 1,
-            "AM4C": 2,
-            "ASA": 2,
-            "ANC": 51,
-            "BOSA": 15,
-            "DA": 1816,
-            "EFF": 41,
-            "GOOD": 27,
-            "IFP": 1,
-            "CCC": 1,
-            "PAC": 1,
-            "PA": 7,
-            "RP": 2,
-            "RISE": 52,
-            "SUN": 1,
-            "M.K.": 6,
-            "UDM": 3,
-            "VF PLUS": 22,
-        },
-        "station": "SEA POINT PRIMARY SCHOOL",
-        "province": "Western Cape",
-        "municipality": "CPT - City of Cape Town",
-        "registered_voters": 3080,
-    },
-    "001335868205982011": {
-        "votes": {"ANC": 9, "DA": 18, "EFF": 6, "M.K.": 1, "ACTIONSA": 18},
-        "station": "BRITTEN STATION SHOP",
-        "province": "North West",
-        "municipality": "NW396 - Lekwa-Teemane",
-        "registered_voters": 165,
-        "officer": "NTHABISENG MAHONONO",
-    },
-    "001334868205983011": {
-        "votes": {"ANC": 19, "DA": 15, "EFF": 5, "ELF-SA": 1, "UAT": 1},
-        "station": "BRITTEN STATION SHOP",
-        "province": "North West",
-        "municipality": "NW396 - Lekwa-Teemane",
-        "registered_voters": 165,
-        "officer": "NTHABISENG MAHONONO",
-    },
-    "001334868205983021": {
-        "votes": {"VF PLUS": 11},
-        "totals": {"valid": 52, "spoilt": 0, "cast": 52, "special": 2, "s24a": 0},
-        "station": "BRITTEN STATION SHOP",
-        "province": "North West",
-        "municipality": "NW396 - Lekwa-Teemane",
-        "registered_voters": 165,
-        "officer": "NTHABISENG MAHONONO",
-    },
-    "001334868205981031": {
-        "votes": {},
-        "totals": {"valid": 52, "spoilt": 0, "cast": 52, "special": 2, "s24a": 0},
-        "station": "BRITTEN STATION SHOP",
-        "province": "North West",
-        "municipality": "NW396 - Lekwa-Teemane",
-        "registered_voters": 165,
-        "officer": "NTHABISENG MAHONONO",
-    },
-    "001334762402341011": {
-        "votes": {"A.C.C.": 1, "AZAPO": 1, "ANC": 481, "DA": 5, "EFF": 77, "IFP": 1},
-        "station": "BAKGAGA BA-MAAKE TRADITIONAL AUT",
-        "province": "Limpopo",
-        "municipality": "LIM333 - Greater Tzaneen",
-        "registered_voters": 1149,
-    },
-    "001334762402341021": {
-        "votes": {"M.K.": 1, "UAT": 1, "ACTIONSA": 4, "AHC": 1},
-        "station": "BAKGAGA BA-MAAKE TRADITIONAL AUT",
-        "province": "Limpopo",
-        "municipality": "LIM333 - Greater Tzaneen",
-        "registered_voters": 1149,
-    },
-    "001334762402341031": {
-        "votes": {"APEMO": 1},
-        "totals": {"valid": 574, "spoilt": 4, "cast": 578, "special": 25, "s24a": 2},
-        "station": "BAKGAGA BA-MAAKE TRADITIONAL AUT",
-        "province": "Limpopo",
-        "municipality": "LIM333 - Greater Tzaneen",
-        "registered_voters": 1149,
-        "officer": "SUZAN MALESA",
-    },
-    "001334762402343011": {
-        "votes": {"AZAPO": 2, "ANC": 462, "DA": 5, "EFF": 97},
-        "station": "BAKGAGA BA-MAAKE TRADITIONAL AUT",
-        "province": "Limpopo",
-        "municipality": "LIM333 - Greater Tzaneen",
-        "registered_voters": 1149,
-    },
-    "001334762402343021": {
-        "votes": {"M.K.": 1, "UAT": 1, "ACTIONSA": 1, "ACDP": 2, "APC": 1, "ACP": 1},
-        "station": "BAKGAGA BA-MAAKE TRADITIONAL AUT",
-        "province": "Limpopo",
-        "municipality": "LIM333 - Greater Tzaneen",
-        "registered_voters": 1149,
-    },
-}
-
 
 def _norm(text: str) -> str:
     return re.sub(r"[^A-Z0-9#]", "", (text or "").upper())
@@ -748,9 +685,16 @@ class OCREngine:
         if not bits:
             return 0, 0.58
         bits.sort()
-        text = " ".join(t for _, t, _ in bits)
+        digit_bits = [
+            (x, text, score)
+            for x, text, score in bits
+            if re.fullmatch(r"[0-9OoØÓDIl|\s.,:/_-]{1,16}", text.strip())
+        ]
+        if not digit_bits:
+            return 0, 0.42
+        text = " ".join(t for _, t, _ in digit_bits)
         votes = parse_vote_digits(text)
-        conf = float(sum(s for _, _, s in bits) / len(bits))
+        conf = float(sum(s for _, _, s in digit_bits) / len(digit_bits))
         if votes is None:
             return 0, max(0.28, min(0.45, conf * 0.5))
         return votes, max(0.2, min(0.92, conf))
@@ -769,7 +713,6 @@ class OCREngine:
     def extract_full_slip_data(
         self,
         img: np.ndarray,
-        use_known: bool = False,
         binary: Optional[np.ndarray] = None,
         digit_backend: str = "heuristic",
         also_cnn_votes: bool = False,
@@ -830,13 +773,11 @@ class OCREngine:
             or (barcode_info["voting_district"] if barcode_info else None)
         )
         raw_barcode_val = barcode_info["raw_barcode"] if barcode_info else (zxing_digits or "")
-        known = KNOWN_SLIPS.get(raw_barcode_val, {}) if use_known else {}
-
-        province = location["province"] or known.get("province")
-        municipality = location["municipality"] or known.get("municipality")
-        station_name = location["station_name"] or known.get("station")
-        registered_voters = location["registered_voters"] or known.get("registered_voters")
-        officer = location["officer"] or known.get("officer")
+        province = location["province"]
+        municipality = location["municipality"]
+        station_name = location["station_name"]
+        registered_voters = location["registered_voters"]
+        officer = location["officer"]
 
         layout_options = PARTY_LAYOUTS.get((ballot_type, page_num), [])
         name_lines = header_lines
@@ -889,13 +830,16 @@ class OCREngine:
 
         full_text_lines = header_lines + name_lines + vote_lines + totals_lines
         party_results = []
-        known_votes = known.get("votes") or {}
 
         for r_idx, (p_name, p_code) in enumerate(parties_template):
             r_y1, r_y2 = aligned_rows[r_idx]
             pad = max(1, int((r_y2 - r_y1) * 0.04))
             row_img = img[r_y1 + pad : max(r_y1 + pad + 1, r_y2 - pad), res_col_left:res_col_right]
             votes, conf, _digits = read_four_blocks(row_img, backend=digit_backend)
+            primary_votes, primary_conf = votes, conf
+            rapid_votes: Optional[int] = None
+            rapid_conf = 0.0
+            engines_disagree = False
             cnn_votes = cnn_conf = None
             if also_cnn_votes and digit_backend != "cnn":
                 cnn_votes, cnn_conf, _ = read_four_blocks(row_img, backend="cnn")
@@ -919,6 +863,7 @@ class OCREngine:
                     not registered_voters or ocr_votes <= registered_voters
                 ):
                     votes, conf = ocr_votes, min(0.70, max(ocr_conf, 0.45))
+                    rapid_votes, rapid_conf = ocr_votes, ocr_conf
                 else:
                     votes, conf = 0, 0.55
 
@@ -929,6 +874,7 @@ class OCREngine:
                 )
                 box_votes: Optional[int] = None
                 box_conf = 0.0
+                ink_density = 0.0
                 need_box = (
                     conf < LOW_VOTE_CONFIDENCE
                     or votes >= 100
@@ -938,53 +884,59 @@ class OCREngine:
                 if need_box:
                     from backend.result_box_ocr import read_result_row_rapid, row_ink_density
 
+                    ink_density = row_ink_density(row_img)
                     # Skip expensive per-row OCR when the cell band has almost no ink.
-                    if votes >= 100 or conf < LOW_VOTE_CONFIDENCE or row_ink_density(row_img) >= 0.012:
+                    if votes >= 100 or conf < LOW_VOTE_CONFIDENCE or ink_density >= 0.012:
                         box_votes, box_conf = read_result_row_rapid(
                             self._get_box_rapid_ocr(),
                             row_img,
                             registered_voters=registered_voters,
+                            use_icr_hints=True,
                         )
                         if box_votes and (box_conf >= 0.85 or box_conf >= ocr_conf):
                             ocr_votes, ocr_conf = box_votes, box_conf
 
                 use_rapid = False
-                box_empty_veto = box_votes == 0 and box_conf >= 0.60
                 box_agrees_with_icr = box_votes == votes and votes > 0 and box_conf >= 0.65
-                strong_icr_vote = votes > 0 and conf >= 0.78
+                rapid_length_conflict = (
+                    votes > 0
+                    and box_votes is not None
+                    and box_votes > 0
+                    and conf >= 0.50
+                    and abs(len(str(votes)) - len(str(box_votes))) >= 2
+                )
                 if (
                     votes == 0
                     and conf >= 0.70
-                    and ocr_votes
-                    and ocr_conf >= 0.55
-                    and not box_empty_veto
+                    and box_votes
+                    and box_conf >= 0.90
+                    and ink_density >= 0.025
                 ):
                     use_rapid = True
-                elif conf < LOW_VOTE_CONFIDENCE and ocr_votes and ocr_conf >= 0.55:
+                elif (
+                    votes > 0
+                    and box_votes
+                    and box_conf >= 0.90
+                    and box_conf >= conf + 0.08
+                    and not rapid_length_conflict
+                ):
                     use_rapid = True
-                elif box_votes and box_conf >= 0.85 and box_votes != votes:
+                elif (
+                    conf < LOW_VOTE_CONFIDENCE
+                    and box_votes
+                    and box_conf >= 0.75
+                    and not rapid_length_conflict
+                ):
                     use_rapid = True
                 elif (
                     ocr_votes
-                    and ocr_conf >= 0.85
-                    and votes != ocr_votes
-                    and not strong_icr_vote
-                    and not box_agrees_with_icr
-                ):
-                    use_rapid = True
-                elif (
-                    0 < votes < 10
-                    and ocr_votes >= 10
-                    and ocr_conf >= 0.55
-                    and not box_agrees_with_icr
-                ):
-                    use_rapid = True
-                elif (
-                    votes >= 100
-                    and ocr_votes
-                    and ocr_votes < 100
-                    and ocr_conf >= 0.50
-                    and (not registered_voters or ocr_votes <= registered_voters)
+                    and ocr_conf >= 0.88
+                    and conf < 0.62
+                    and not (
+                        votes > 0
+                        and conf >= 0.50
+                        and abs(len(str(votes)) - len(str(ocr_votes))) >= 2
+                    )
                 ):
                     use_rapid = True
 
@@ -992,6 +944,10 @@ class OCREngine:
                     not registered_voters or ocr_votes <= registered_voters
                 ):
                     votes, conf = ocr_votes, min(0.70, max(ocr_conf, 0.55))
+                    rapid_votes, rapid_conf = ocr_votes, ocr_conf
+                elif box_agrees_with_icr:
+                    rapid_votes, rapid_conf = box_votes, box_conf
+                    conf = min(0.93, max(conf, (conf + box_conf) / 2.0 + 0.06))
                 elif (
                     votes >= 100
                     and (not registered_voters or votes > registered_voters)
@@ -1000,9 +956,13 @@ class OCREngine:
                     # Dashed Ø boxes often invent multi-hundred totals; drop unconfirmed.
                     votes, conf = 0, min(conf, 0.40)
 
-            if use_known and p_code in known_votes:
-                votes = int(known_votes[p_code])
-                conf = max(conf, 0.82)
+                candidate_vote = box_votes if box_votes is not None else ocr_votes
+                candidate_conf = box_conf if box_votes is not None else ocr_conf
+                if candidate_vote and candidate_vote != primary_votes:
+                    engines_disagree = True
+                    rapid_votes = candidate_vote
+                    rapid_conf = candidate_conf
+                    conf = min(conf, 0.68)
 
             # A single party cannot exceed registered voters on these slips.
             if registered_voters and votes > registered_voters:
@@ -1021,6 +981,14 @@ class OCREngine:
                 "confidence_score": float(conf),
                 "is_overridden": False,
                 "original_ocr_votes": votes,
+                "recognition_candidates": {
+                    "primary": {"votes": int(primary_votes), "confidence": float(primary_conf)},
+                    "rapid": (
+                        {"votes": int(rapid_votes), "confidence": float(rapid_conf)}
+                        if rapid_votes is not None
+                        else None
+                    ),
+                },
                 "signature_detected": bool(sig_detected),
                 "bbox": {
                     "x": res_col_left,
@@ -1029,25 +997,14 @@ class OCREngine:
                     "height": r_y2 - r_y1,
                 },
                 "_vote_overflow": exception_flag_vote_overflow,
+                "_ocr_disagreement": engines_disagree,
             }
             if cnn_votes is not None:
                 row_out["cnn_votes"] = int(cnn_votes)
                 row_out["cnn_confidence"] = float(cnn_conf or 0.0)
             party_results.append(row_out)
 
-        if use_known:
-            known_codes = set(known_votes)
-            for row in party_results:
-                if row["party_code"] in known_codes:
-                    continue
-                # Zero out parties not listed in the verified slip when lookup is on.
-                if known_votes and row["votes"] and row["party_code"] not in known_codes:
-                    row["votes"] = 0
-                    row["original_ocr_votes"] = 0
-
         totals_ocr = self._extract_totals(totals_lines) if is_final_page else {}
-        if use_known and known.get("totals"):
-            totals_ocr = {**totals_ocr, **known["totals"]}
         if is_final_page:
             total_valid = totals_ocr.get("valid") or 0
             total_spoilt = totals_ocr.get("spoilt") or 0
@@ -1067,10 +1024,14 @@ class OCREngine:
         exception_flags = []
         if any(row.pop("_vote_overflow", False) for row in party_results):
             exception_flags.append("votes_exceed_registered")
+        if any(row.pop("_ocr_disagreement", False) for row in party_results):
+            exception_flags.append("ocr_engine_disagreement")
         if any(row["votes"] > 0 and row["confidence_score"] < LOW_VOTE_CONFIDENCE for row in party_results):
             exception_flags.append("low_confidence_digits")
         if any(row["confidence_score"] < 0.4 for row in party_results):
             exception_flags.append("unreadable_digits")
+        if any(row["votes"] == 0 and row["signature_detected"] for row in party_results):
+            exception_flags.append("signature_on_zero_vote_row")
         if num_rows >= 8 and sum(row["votes"] for row in party_results) == 0:
             exception_flags.append("no_votes_read")
         party_sum = sum(row["votes"] for row in party_results)

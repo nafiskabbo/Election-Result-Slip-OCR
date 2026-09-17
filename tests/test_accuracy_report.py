@@ -147,22 +147,22 @@ def test_format_report_text_shows_got_expected_and_unlabeled_votes():
             },
         ],
     }
-    text = format_report_text(result, use_known=True)
-    assert "Upload API / desk path" in text
+    text = format_report_text(result, use_known=False)
+    assert "Upload API / raw OCR path" in text
     assert "p_1.jpg  votes.ANC: got 400  expected 481" in text
     assert "votes.EFF: got 12  expected 0 (not in gold)  EXTRA" in text
     assert "ResultSlip.jpg" in text
     assert "ANC" in text and "9" in text
     assert "DA" in text and "18" in text
     assert "unlabeled" in text
-    assert "KNOWN_SLIPS applied for 001335868205982011" in text
+    assert "known-slip overrides disabled" in text
 
 
-def test_extract_page_defaults_to_desk_lookup():
+def test_extract_page_has_no_known_slip_lookup():
     import inspect
     from backend.page_pipeline import extract_page_from_file
 
-    assert inspect.signature(extract_page_from_file).parameters["use_known"].default is True
+    assert "use_known" not in inspect.signature(extract_page_from_file).parameters
 
 
 def test_upload_uses_shared_pipeline():
@@ -171,7 +171,7 @@ def test_upload_uses_shared_pipeline():
 
     source = inspect.getsource(_process_saved_file)
     assert "extract_page_from_file" in source
-    assert "use_known=True" in source
+    assert "use_known" not in source
 
 
 def test_digit_cnn_blank_and_synth_nine():

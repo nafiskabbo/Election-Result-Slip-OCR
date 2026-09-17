@@ -16,6 +16,7 @@ from rapidocr import ModelType, OCRVersion, RapidOCR
 
 # Strict cell text: digits / slashed-zero lookalikes only (reject Chinese / words).
 _CELL_DIGIT_RE = re.compile(r"^[0-9OoØøIl|SsbB]{1,2}$")
+_ROW_DIGIT_RE = re.compile(r"^[0-9OoØøIl|SsBbD\s.,:/_-]{1,16}$")
 
 
 def build_box_rapid_ocr(model_size: str = "small") -> RapidOCR:
@@ -151,6 +152,7 @@ def read_result_row_rapid(
     *,
     registered_voters: Optional[int] = None,
     max_plausible: int = 9999,
+    use_icr_hints: bool = False,
 ) -> Tuple[int, float]:
     """OCR one RESULT row (4 boxes) with RapidOCR; return (votes, confidence).
 
@@ -163,12 +165,10 @@ def read_result_row_rapid(
     # Lazy import avoids circular dependency with ocr_engine.
     from backend.ocr_engine import parse_vote_digits
 
-    best_votes: Optional[int] = None
-    best_conf = 0.0
+    evidence: dict[int, List[Tuple[float, str]]] = defaultdict(list)
     row_digits: List[Tuple[str, float]] = []
 
-    def consider(text: str, conf: float) -> None:
-        nonlocal best_votes, best_conf
+    def consider(text: str, conf: float, source: str) -> None:
         votes = parse_vote_digits(text)
         if votes is None:
             return
@@ -176,8 +176,7 @@ def read_result_row_rapid(
             return
         if votes > max_plausible:
             return
-        if conf >= best_conf:
-            best_votes, best_conf = votes, conf
+        evidence[int(votes)].append((float(conf), source))
 
     # Full-row path (better for multi-digit totals when det finds ink).
     for variant in _row_variants(row_bgr):
@@ -191,15 +190,17 @@ def read_result_row_rapid(
         bits = _ocr_texts(raw)
         if not bits:
             continue
+        if not all(_ROW_DIGIT_RE.fullmatch(t.strip()) for t, _ in bits):
+            continue
         text = " ".join(t for t, _ in bits)
         conf = float(sum(s for _, s in bits) / max(1, len(bits)))
         digits = _normalize_digit_token(text)
         if digits:
             row_digits.append((digits, conf))
-        consider(text, conf)
+        consider(text, conf, "row")
 
     # Per-cell recognition (det off) — only keep clean digit tokens.
-    h, w = row_bgr.shape[:2]
+    _, w = row_bgr.shape[:2]
     cell_tokens: List[str] = []
     cell_confs: List[float] = []
     cell_hints: List[Tuple[Optional[int], float]] = []
@@ -207,7 +208,7 @@ def read_result_row_rapid(
         x1 = int(w * c / 4)
         x2 = int(w * (c + 1) / 4)
         cell = row_bgr[:, x1:x2]
-        hint_digit, hint_conf = _cell_icr_hint(cell)
+        hint_digit, hint_conf = _cell_icr_hint(cell) if use_icr_hints else (None, 0.0)
         cell_hints.append((hint_digit, hint_conf))
         token = ""
         score = 0.0
@@ -226,17 +227,24 @@ def read_result_row_rapid(
             for digits, sc in candidates:
                 grouped[digits].append(sc)
             best_digit, best_scores = max(
-                grouped.items(), key=lambda item: (max(item[1]), len(item[1]))
+                grouped.items(),
+                key=lambda item: (
+                    len(item[1]),
+                    sum(item[1]) / len(item[1]),
+                    max(item[1]),
+                ),
             )
             strong_votes = sum(1 for sc in best_scores if sc >= 0.95)
-            if hint_digit is not None or strong_votes >= 2:
+            if hint_digit is not None or strong_votes >= 2 or (
+                len(best_scores) >= 3 and max(best_scores) >= 0.80
+            ):
                 token = best_digit
                 score = max(best_scores)
         cell_tokens.append(token)
         cell_confs.append(score)
 
     filled_idxs = [i for i, token in enumerate(cell_tokens) if token]
-    if filled_idxs:
+    if filled_idxs and use_icr_hints:
         first = filled_idxs[0]
         hint_digit, hint_conf = cell_hints[first]
         if len(filled_idxs) >= 2 and hint_digit is None and hint_conf >= 0.85:
@@ -260,8 +268,20 @@ def read_result_row_rapid(
                 cell_conf = max(cell_conf, 0.93)
         # Require at least one strong cell so dashed-line noise does not invent votes.
         if max(cell_confs) >= 0.55:
-            consider(joined, cell_conf)
+            consider(joined, cell_conf, "cells")
 
-    if best_votes is None:
+    if not evidence:
         return 0, 0.30
-    return int(best_votes), max(0.25, min(0.90, best_conf))
+
+    def candidate_score(item: Tuple[int, List[Tuple[float, str]]]) -> Tuple[float, int, float]:
+        _, observations = item
+        scores = [score for score, _ in observations]
+        sources = {source for _, source in observations}
+        consensus_bonus = min(0.15, 0.05 * (len(observations) - 1))
+        source_bonus = 0.04 if len(sources) > 1 else 0.0
+        return max(scores) + consensus_bonus + source_bonus, len(observations), max(scores)
+
+    best_votes, observations = max(evidence.items(), key=candidate_score)
+    best_conf = max(score for score, _ in observations)
+    best_conf += min(0.08, 0.025 * (len(observations) - 1))
+    return int(best_votes), max(0.25, min(0.92, best_conf))

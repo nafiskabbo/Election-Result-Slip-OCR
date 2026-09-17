@@ -12,7 +12,7 @@ from typing import Any, Dict, List, Optional, Tuple
 
 from backend.config import ROOT_DIR, SAMPLE_DIR, STORAGE_DIR
 from backend.image_enhancer import ImageEnhancer
-from backend.ocr_engine import KNOWN_SLIPS, OCREngine
+from backend.ocr_engine import OCREngine
 from backend.page_pipeline import extract_page_from_file
 
 IMAGE_EXTS = {".jpg", ".jpeg", ".png", ".webp", ".tif", ".tiff", ".bmp"}
@@ -108,7 +108,12 @@ def compare_page(extracted: Dict[str, Any], gold: Dict[str, Any]) -> List[Tuple[
         checks.append((field, extracted.get(field), gold[field], _eq(extracted.get(field), gold[field])))
 
     votes_by_code = {row["party_code"]: row["votes"] for row in extracted.get("party_results") or []}
-    for code, expected in (gold.get("votes") or {}).items():
+    expected_votes = gold.get("votes") or {}
+    # Gold vote maps are sparse: omitted IEC party rows are verified blanks/zeros.
+    # Score the union so false-positive votes count as errors.
+    vote_codes = sorted(set(votes_by_code) | set(expected_votes))
+    for code in vote_codes:
+        expected = expected_votes.get(code, 0)
         actual = votes_by_code.get(code)
         checks.append((f"votes.{code}", actual, expected, actual == expected))
 
@@ -123,27 +128,17 @@ def compare_page(extracted: Dict[str, Any], gold: Dict[str, Any]) -> List[Tuple[
 
 
 def _desk_path_label(use_known: bool) -> str:
-    if use_known:
-        return (
-            "Upload API / desk path "
-            "(load_file_as_cv2 → enhance → extract_full_slip_data, KNOWN_SLIPS on)"
-        )
-    return "raw OCR only (KNOWN_SLIPS off — not what operators see)"
+    return "Upload API / raw OCR path (known-slip overrides disabled)"
 
 
 def _lookup_note(snap: Dict[str, Any], use_known: bool) -> str:
-    if not use_known:
-        return "KNOWN_SLIPS off"
-    barcode = str(snap.get("barcode_text") or "")
-    if barcode in KNOWN_SLIPS:
-        return f"KNOWN_SLIPS applied for {barcode} (same votes the desk shows)"
-    return "no KNOWN_SLIPS row for this barcode (desk shows raw OCR on this page)"
+    return "known-slip overrides disabled"
 
 
 def score_folder(
     folder: Path,
     gold: Dict[str, Dict[str, Any]],
-    use_known: bool = True,
+    use_known: bool = False,
     compare_digit_cnn: bool = True,
     rapidocr_model: str = "small",
     digit_backend: str = "heuristic",
@@ -155,6 +150,8 @@ def score_folder(
     labeled_ok = labeled_total = 0
     iec_ok = iec_total = 0
     heur_vote_ok = heur_vote_total = 0
+    nonzero_vote_ok = nonzero_vote_total = 0
+    blank_vote_ok = blank_vote_total = 0
     cnn_vote_ok = cnn_vote_total = 0
     backend = (digit_backend or "heuristic").strip().lower()
 
@@ -165,9 +162,8 @@ def score_folder(
                 str(path),
                 enhancer=enhancer,
                 ocr_engine=engine,
-                use_known=use_known,
                 digit_backend=backend,
-                also_cnn_votes=compare_digit_cnn and not use_known and backend == "heuristic",
+                also_cnn_votes=compare_digit_cnn and backend == "heuristic",
                 rapidocr_model=rapidocr_model,
             )
         except Exception as exc:
@@ -204,14 +200,23 @@ def score_folder(
             iec_total += len(checks)
 
         vote_compare = _vote_compare_rows(extracted, expected)
-        for row in vote_compare:
-            heur_vote_total += 1
-            if row["heuristic_ok"]:
-                heur_vote_ok += 1
-            if compare_digit_cnn and not use_known:
-                cnn_vote_total += 1
-                if row["cnn_ok"]:
-                    cnn_vote_ok += 1
+        if expected.get("template") != "worksheet":
+            for row in vote_compare:
+                heur_vote_total += 1
+                if row["heuristic_ok"]:
+                    heur_vote_ok += 1
+                if row["expected"] == 0:
+                    blank_vote_total += 1
+                    if row["heuristic_ok"]:
+                        blank_vote_ok += 1
+                else:
+                    nonzero_vote_total += 1
+                    if row["heuristic_ok"]:
+                        nonzero_vote_ok += 1
+                if compare_digit_cnn:
+                    cnn_vote_total += 1
+                    if row["cnn_ok"]:
+                        cnn_vote_ok += 1
 
         pages.append({
             "file": path.name,
@@ -239,6 +244,10 @@ def score_folder(
         "iec_total": iec_total,
         "heuristic_vote_hits": heur_vote_ok,
         "heuristic_vote_total": heur_vote_total,
+        "nonzero_vote_hits": nonzero_vote_ok,
+        "nonzero_vote_total": nonzero_vote_total,
+        "blank_vote_hits": blank_vote_ok,
+        "blank_vote_total": blank_vote_total,
         "cnn_vote_hits": cnn_vote_ok,
         "cnn_vote_total": cnn_vote_total,
         "rapidocr_model": rapidocr_model,
@@ -253,7 +262,9 @@ def _vote_compare_rows(extracted: Dict[str, Any], gold: Dict[str, Any]) -> List[
         row["party_code"]: row for row in (extracted.get("party_results") or [])
     }
     rows: List[Dict[str, Any]] = []
-    for code, expected in (gold.get("votes") or {}).items():
+    expected_votes = gold.get("votes") or {}
+    for code in sorted(set(by_code) | set(expected_votes)):
+        expected = expected_votes.get(code, 0)
         party = by_code.get(code) or {}
         heur = party.get("votes")
         cnn = party.get("cnn_votes")
@@ -312,6 +323,14 @@ def print_report(result: Dict[str, Any], use_known: bool) -> None:
         print(f"IEC result slips: {result['iec_hits']}/{result['iec_total']} fields  ({iec_pct}%)")
     if all_pct is not None:
         print(f"All labeled files: {result['labeled_hits']}/{result['labeled_total']} fields  ({all_pct}%)")
+    if result.get("heuristic_vote_total"):
+        print(
+            f"Party rows: {result.get('heuristic_vote_hits', 0)}/"
+            f"{result['heuristic_vote_total']} exact  "
+            f"(non-zero {result.get('nonzero_vote_hits', 0)}/"
+            f"{result.get('nonzero_vote_total', 0)}, blank {result.get('blank_vote_hits', 0)}/"
+            f"{result.get('blank_vote_total', 0)})"
+        )
     if result["unlabeled"]:
         print(f"{result['unlabeled']} photo(s) have no gold labels — retrieved values are in the .md report.")
 
@@ -538,6 +557,18 @@ def format_report_markdown(result: Dict[str, Any], use_known: bool) -> str:
             f"| Party votes — heuristic ICR (+ RapidOCR fallback) | "
             f"{result.get('heuristic_vote_hits', 0)}/{hv} ({hp}%) |"
         )
+        nz_total = result.get("nonzero_vote_total") or 0
+        blank_total = result.get("blank_vote_total") or 0
+        if nz_total:
+            lines.append(
+                f"| Non-zero party votes | {result.get('nonzero_vote_hits', 0)}/"
+                f"{nz_total} ({_pct(result.get('nonzero_vote_hits', 0), nz_total)}%) |"
+            )
+        if blank_total:
+            lines.append(
+                f"| Blank/zero party rows | {result.get('blank_vote_hits', 0)}/"
+                f"{blank_total} ({_pct(result.get('blank_vote_hits', 0), blank_total)}%) |"
+            )
     if cv:
         cp = _pct(result.get("cnn_vote_hits", 0), cv)
         lines.append(
@@ -550,13 +581,9 @@ def format_report_markdown(result: Dict[str, Any], use_known: bool) -> str:
         elif (result.get("heuristic_vote_hits") or 0) > (result.get("cnn_vote_hits") or 0):
             winner = "heuristic / RapidOCR path"
         lines.append(f"| Vote-accuracy winner (this run) | **{winner}** |")
-    elif use_known:
-        lines.append(
-            "| Digit CNN compare | skipped (desk/`KNOWN_SLIPS` mode — use `--raw-ocr`) |"
-        )
     else:
         lines.append(
-            "| Digit CNN compare | skipped (pass `--compare-digit-cnn` with `--raw-ocr`) |"
+            "| Digit CNN compare | skipped (pass `--compare-digit-cnn`) |"
         )
     lines.append("")
 
@@ -610,37 +637,30 @@ def format_report_markdown(result: Dict[str, Any], use_known: bool) -> str:
 
     lines.append("## Heuristic vs digit CNN (all labeled party votes)")
     lines.append("")
-    if use_known:
-        lines.append(
-            "Digit CNN compare runs only with `--raw-ocr` so `KNOWN_SLIPS` does not "
-            "overwrite both columns."
-        )
-        lines.append("")
-    else:
-        lines.append(
-            "| File | Party | Expected | Heuristic ICR | Digit CNN | Better |"
-        )
-        lines.append("| --- | --- | ---: | ---: | ---: | --- |")
-        any_row = False
-        for page in result["pages"]:
-            for row in page.get("vote_compare") or []:
-                any_row = True
-                better = "—"
-                if row["heuristic_ok"] and row["cnn_ok"]:
-                    better = "both"
-                elif row["heuristic_ok"]:
-                    better = "heuristic"
-                elif row["cnn_ok"]:
-                    better = "digit CNN"
-                else:
-                    better = "neither"
-                lines.append(
-                    f"| `{page['file']}` | {row['code']} | {row['expected']} | "
-                    f"{_show(row['heuristic'])} | {_show(row['cnn_votes'])} | {better} |"
-                )
-        if not any_row:
-            lines.append("| — | — | — | — | — | no gold votes |")
-        lines.append("")
+    lines.append(
+        "| File | Party | Expected | Heuristic ICR | Digit CNN | Better |"
+    )
+    lines.append("| --- | --- | ---: | ---: | ---: | --- |")
+    any_row = False
+    for page in result["pages"]:
+        for row in page.get("vote_compare") or []:
+            any_row = True
+            better = "—"
+            if row["heuristic_ok"] and row["cnn_ok"]:
+                better = "both"
+            elif row["heuristic_ok"]:
+                better = "heuristic"
+            elif row["cnn_ok"]:
+                better = "digit CNN"
+            else:
+                better = "neither"
+            lines.append(
+                f"| `{page['file']}` | {row['code']} | {row['expected']} | "
+                f"{_show(row['heuristic'])} | {_show(row['cnn_votes'])} | {better} |"
+            )
+    if not any_row:
+        lines.append("| — | — | — | — | — | no gold votes |")
+    lines.append("")
 
     lines.append("## Misses (gold fields)")
     lines.append("")
@@ -771,6 +791,20 @@ def format_vote_path_compare_markdown(
         hybrid.get("heuristic_vote_total", 0),
         rapid_only.get("heuristic_vote_hits", 0),
         rapid_only.get("heuristic_vote_total", 0),
+    )
+    row(
+        "Non-zero party votes",
+        hybrid.get("nonzero_vote_hits", 0),
+        hybrid.get("nonzero_vote_total", 0),
+        rapid_only.get("nonzero_vote_hits", 0),
+        rapid_only.get("nonzero_vote_total", 0),
+    )
+    row(
+        "Blank/zero party rows",
+        hybrid.get("blank_vote_hits", 0),
+        hybrid.get("blank_vote_total", 0),
+        rapid_only.get("blank_vote_hits", 0),
+        rapid_only.get("blank_vote_total", 0),
     )
 
     h_votes = _pct(hybrid.get("heuristic_vote_hits", 0), hybrid.get("heuristic_vote_total") or 0) or 0
@@ -986,7 +1020,7 @@ def main(argv: Optional[List[str]] = None) -> int:
     parser.add_argument(
         "--raw-ocr",
         action="store_true",
-        help="Disable KNOWN_SLIPS so scores reflect raw OCR (RapidOCR + heuristic ICR).",
+        help="Deprecated no-op: raw OCR is always used.",
     )
     parser.add_argument(
         "--rapidocr-model",
@@ -997,14 +1031,14 @@ def main(argv: Optional[List[str]] = None) -> int:
     parser.add_argument(
         "--compare-digit-cnn",
         action="store_true",
-        help="With --raw-ocr, also score the experimental MNIST/EMNIST digit CNN vs gold votes.",
+        help="Also score the experimental MNIST/EMNIST digit CNN vs gold votes.",
     )
     parser.add_argument(
         "--compare-vote-path",
         action="store_true",
         help=(
-            "With --raw-ocr, compare hybrid (RapidOCR + custom ICR) vs RapidOCR-only "
-            "votes and write a Markdown report."
+            "Compare hybrid (RapidOCR + custom ICR) vs pure RapidOCR votes "
+            "and write a Markdown report."
         ),
     )
     parser.add_argument(
@@ -1012,11 +1046,6 @@ def main(argv: Optional[List[str]] = None) -> int:
         choices=("heuristic", "rapid", "cnn"),
         default="heuristic",
         help="RESULT digit path: heuristic (hybrid), rapid (RapidOCR only), or cnn.",
-    )
-    parser.add_argument(
-        "--with-known",
-        action="store_true",
-        help="Deprecated: this is now the default (same path as the desk).",
     )
     parser.add_argument(
         "--fail-under",
@@ -1041,13 +1070,10 @@ def main(argv: Optional[List[str]] = None) -> int:
         return 1
 
     gold = load_gold(GOLD_PATH)
-    use_known = not args.raw_ocr
-    compare_cnn = bool(args.raw_ocr and args.compare_digit_cnn)
+    use_known = False
+    compare_cnn = bool(args.compare_digit_cnn)
 
     if args.compare_vote_path:
-        if not args.raw_ocr:
-            print("Note: --compare-vote-path implies --raw-ocr (KNOWN_SLIPS off).", file=sys.stderr)
-        use_known = False
         model = args.rapidocr_model if args.rapidocr_model != "both" else "small"
         print("=== Hybrid: RapidOCR + custom ICR ===")
         hybrid = score_folder(
