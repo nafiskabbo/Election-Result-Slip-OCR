@@ -1,7 +1,9 @@
 import { useEffect, useRef, useState } from "react";
 import { api } from "../api.js";
+import { formatDuration } from "../time.js";
 import CameraCapture, { openRearCamera } from "./CameraCapture.jsx";
 import InfoTip from "./InfoTip.jsx";
+import ProcessingProgress, { initialProcess, progressFromEvent } from "./ProcessingProgress.jsx";
 
 export default function Capture({
   busy,
@@ -12,10 +14,10 @@ export default function Capture({
   registerCloseCamera,
 }) {
   const [over, setOver] = useState(false);
-  const [note, setNote] = useState("");
   const [cameraOpen, setCameraOpen] = useState(false);
   const [liveStream, setLiveStream] = useState(null);
   const [pending, setPending] = useState([]);
+  const [process, setProcess] = useState(null);
   const pendingRef = useRef(pending);
   pendingRef.current = pending;
   const streamRef = useRef(null);
@@ -73,16 +75,30 @@ export default function Capture({
     const files = Array.from(fileList || []);
     if (!files.length) return;
     setBusy(true);
-    setNote(`Reading ${files.length} file${files.length === 1 ? "" : "s"}…`);
+    setProcess(initialProcess(files.length));
     try {
-      const data = await api.upload(files);
-      notify(`${data.processed_pages_count} pages grouped into ${data.affected_slips.length} slip${data.affected_slips.length === 1 ? "" : "s"}`, "pass");
+      const data = await api.upload(files, {
+        onProgress: (event) => setProcess((prev) => progressFromEvent(event, prev)),
+      });
+      const pages = data.processed_pages_count;
+      const slips = data.affected_slips.length;
+      const duration = data.total_elapsed_seconds != null
+        ? ` · ${formatDuration(data.total_elapsed_seconds)}`
+        : "";
+      notify(`${pages} page${pages === 1 ? "" : "s"} grouped into ${slips} slip${slips === 1 ? "" : "s"}${duration}`, "pass");
+      await new Promise((resolve) => window.setTimeout(resolve, 1100));
       await onDone();
     } catch (err) {
       notify(err.message, "fail");
+      setProcess((prev) => (prev ? {
+        ...prev,
+        failed: true,
+        endedAt: prev.endedAt || new Date().toISOString(),
+        message: err.message,
+        remainingSeconds: 0,
+      } : prev));
     } finally {
       setBusy(false);
-      setNote("");
     }
   };
 
@@ -141,6 +157,8 @@ export default function Capture({
         </header>
       )}
 
+      {process && !(cameraOpen && liveStream) ? <ProcessingProgress progress={process} /> : null}
+
       {cameraOpen && liveStream ? (
         <CameraCapture
           stream={liveStream}
@@ -153,7 +171,7 @@ export default function Capture({
             openNativeCamera();
           }}
         />
-      ) : (
+      ) : busy ? null : (
         <div
           className={`drop ${over ? "over" : ""}`}
           onDragOver={(e) => { e.preventDefault(); setOver(true); }}
@@ -199,7 +217,7 @@ export default function Capture({
         </div>
       )}
 
-      {pending.length > 0 && !(cameraOpen && liveStream) && (
+      {pending.length > 0 && !busy && !(cameraOpen && liveStream) && (
         <div className="capture-queue">
           <div className="capture-queue-head">
             <h2>{pending.length} page{pending.length === 1 ? "" : "s"} ready</h2>
@@ -219,8 +237,6 @@ export default function Capture({
           </ul>
         </div>
       )}
-
-      {busy && <div className="progress">{note || "Working…"}</div>}
     </section>
   );
 }

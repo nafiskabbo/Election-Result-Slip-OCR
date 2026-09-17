@@ -4,7 +4,7 @@ from __future__ import annotations
 
 import os
 import uuid
-from typing import Optional, Tuple
+from typing import Callable, Optional, Tuple
 
 from backend.image_enhancer import ImageEnhancer, ImageEnhancementResult
 from backend.ocr_engine import OCREngine
@@ -21,6 +21,7 @@ def extract_page_from_file(
     also_cnn_votes: bool = False,
     rapidocr_model: Optional[str] = None,
     debug_dir: Optional[str] = None,
+    on_stage: Optional[Callable[[str], None]] = None,
 ) -> Tuple[ImageEnhancementResult, dict]:
     """Load, enhance, and OCR one page the same way POST /api/upload does.
 
@@ -37,7 +38,11 @@ def extract_page_from_file(
     cv_img = enhancer.load_file_as_cv2(file_path, page_index=page_index)
     if cv_img is None:
         raise ValueError(f"could not read image: {file_path}")
+    if on_stage:
+        on_stage("enhancing")
     enh_res = enhancer.process_image(cv_img, debug_dir=debug_dir)
+    if on_stage:
+        on_stage("reading")
     extracted = ocr_engine.extract_full_slip_data(
         enh_res.enhanced_image,
         binary=enh_res.binary_image,
@@ -55,6 +60,7 @@ def persist_enhanced_page(
     *,
     enhancer: Optional[ImageEnhancer] = None,
     ocr_engine: Optional[OCREngine] = None,
+    on_stage: Optional[Callable[[str], None]] = None,
 ) -> Tuple[ImageEnhancementResult, dict, str, str]:
     """Enhance, OCR, and write enhanced/thumbnail files for one page."""
     ensure_dirs()
@@ -64,6 +70,7 @@ def persist_enhanced_page(
         page_index,
         enhancer=enhancer,
         ocr_engine=ocr_engine,
+        on_stage=on_stage,
     )
     stem = os.path.splitext(os.path.basename(original_filename or "page"))[0]
     enh_filename = f"enh_{uuid.uuid4().hex[:10]}_{stem}_p{page_index + 1}.jpg"

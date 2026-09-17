@@ -86,6 +86,8 @@ class SlipSummaryResponse(BaseModel):
     created_at: str
     updated_at: str
     uploaded_at: Optional[str] = None
+    processing_started_at: Optional[str] = None
+    processing_ended_at: Optional[str] = None
     approved_at: Optional[str] = None
     approved_by: Optional[str] = None
     rejection_reason: Optional[str] = None

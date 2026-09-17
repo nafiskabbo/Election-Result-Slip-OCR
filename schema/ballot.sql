@@ -79,6 +79,11 @@ comment on column slips.voting_district is 'IEC voting district (VD) number.';
 alter table slips add column if not exists is_vote_related boolean not null default true;
 comment on column slips.is_vote_related is 'False when the upload is not an IEC result slip; vote tables must not be shown.';
 
+alter table slips add column if not exists processing_started_at timestamptz;
+alter table slips add column if not exists processing_ended_at timestamptz;
+comment on column slips.processing_started_at is 'When OCR processing of this slip first started.';
+comment on column slips.processing_ended_at is 'When OCR processing of this slip last finished.';
+
 create table if not exists slip_pages (
     id text primary key,
     slip_id text not null,

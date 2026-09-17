@@ -1,10 +1,12 @@
 import { useEffect, useMemo, useRef, useState } from "react";
 import { api, apiUrl, fileUrl, statusLabel } from "../api.js";
-import { formatExactTime, formatRelativeTime } from "../time.js";
+import { formatDuration, formatExactTime, processingWindow } from "../time.js";
 import Viewer from "./Viewer.jsx";
 import Prompt from "./Prompt.jsx";
 import Sheet from "./Sheet.jsx";
 import { Icon } from "./Icons.jsx";
+import ProcessingProgress, { initialProcess, progressFromEvent } from "./ProcessingProgress.jsx";
+import ProcessingTimes from "./ProcessingTimes.jsx";
 
 export default function Review({ slip, mobileTab = "photo", onReload, onInbox, notify }) {
   const [pageIndex, setPageIndex] = useState(0);
@@ -13,6 +15,7 @@ export default function Review({ slip, mobileTab = "photo", onReload, onInbox, n
   const [draft, setDraft] = useState(slip || null);
   const [editOpen, setEditOpen] = useState(false);
   const [pageBusy, setPageBusy] = useState(false);
+  const [process, setProcess] = useState(null);
   const replaceInputRef = useRef(null);
   const active = draft || slip;
 
@@ -159,13 +162,27 @@ export default function Review({ slip, mobileTab = "photo", onReload, onInbox, n
   const replacePage = async (file) => {
     if (!file || !page) return;
     setPageBusy(true);
+    setProcess(initialProcess(1));
     try {
-      await api.replacePage(active.id, page.id, file);
+      const data = await api.replacePage(active.id, page.id, file, {
+        onProgress: (event) => setProcess((prev) => progressFromEvent(event, prev)),
+      });
+      const duration = data.total_elapsed_seconds != null
+        ? ` · ${formatDuration(data.total_elapsed_seconds)}`
+        : "";
       setEditOpen(false);
-      notify("Page image replaced", "pass");
+      notify(`Page image replaced${duration}`, "pass");
+      setProcess(null);
       await onReload(active.id);
     } catch (err) {
       notify(err.message, "fail");
+      setProcess((prev) => (prev ? {
+        ...prev,
+        failed: true,
+        endedAt: prev.endedAt || new Date().toISOString(),
+        message: err.message,
+        remainingSeconds: 0,
+      } : prev));
     } finally {
       setPageBusy(false);
     }
@@ -223,18 +240,10 @@ export default function Review({ slip, mobileTab = "photo", onReload, onInbox, n
           {active.municipality ? ` · ${active.municipality}` : ""}
           {active.province ? ` · ${active.province}` : ""}
         </div>
-        {(active.uploaded_at || active.created_at) ? (
-          <div className="sub">
-            Uploaded{" "}
-            <time
-              dateTime={active.uploaded_at || active.created_at}
-              title={formatExactTime(active.uploaded_at || active.created_at)}
-            >
-              {formatExactTime(active.uploaded_at || active.created_at)}
-              {" "}({formatRelativeTime(active.uploaded_at || active.created_at)})
-            </time>
-          </div>
-        ) : null}
+        <ProcessingTimes
+          started={processingWindow(active).started}
+          ended={processingWindow(active).ended}
+        />
         {page?.upload_timestamp ? (
           <div className="sub">
             Page {page.page_number} captured{" "}
@@ -472,7 +481,7 @@ export default function Review({ slip, mobileTab = "photo", onReload, onInbox, n
       <Sheet
         title="Edit page image"
         open={editOpen}
-        onClose={() => { if (!pageBusy) setEditOpen(false); }}
+        onClose={() => { if (!pageBusy) { setEditOpen(false); setProcess(null); } }}
         footer={(
           <button
             type="button"
@@ -485,13 +494,14 @@ export default function Review({ slip, mobileTab = "photo", onReload, onInbox, n
         )}
       >
         <p className="sub">Replace the photo if the capture is wrong, or remove it from this slip.</p>
+        {process ? <ProcessingProgress progress={process} /> : null}
         <button
           type="button"
           className="btn"
           disabled={pageBusy || !page}
           onClick={() => replaceInputRef.current?.click()}
         >
-          {pageBusy ? "Working…" : "Replace image"}
+          {pageBusy ? "Reading image…" : "Replace image"}
         </button>
       </Sheet>
     </section>

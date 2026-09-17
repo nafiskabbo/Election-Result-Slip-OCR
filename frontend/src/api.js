@@ -9,6 +9,13 @@ export function apiUrl(path = "") {
 
 const jsonHeaders = { "Content-Type": "application/json" };
 
+async function failFromResponse(res) {
+  const contentType = res.headers.get("content-type") || "";
+  const body = contentType.includes("application/json") ? await res.json() : await res.text();
+  const detail = body?.detail || body?.message || res.statusText;
+  throw new Error(typeof detail === "string" ? detail : JSON.stringify(detail));
+}
+
 async function request(path, options = {}) {
   let res;
   try {
@@ -19,13 +26,81 @@ async function request(path, options = {}) {
       : "Cannot reach the API. Set VITE_API_URL if the desk is hosted separately from the backend.";
     throw new Error(hint);
   }
-  const contentType = res.headers.get("content-type") || "";
-  const body = contentType.includes("application/json") ? await res.json() : await res.text();
   if (!res.ok) {
-    const detail = body?.detail || body?.message || res.statusText;
-    throw new Error(typeof detail === "string" ? detail : JSON.stringify(detail));
+    await failFromResponse(res);
   }
-  return body;
+  const contentType = res.headers.get("content-type") || "";
+  return contentType.includes("application/json") ? res.json() : res.text();
+}
+
+async function readNdjson(res, onProgress) {
+  if (!res.body) {
+    const body = await res.json();
+    onProgress?.({ event: "complete", result: body, ...body });
+    return body;
+  }
+  const reader = res.body.getReader();
+  const decoder = new TextDecoder();
+  let buffer = "";
+  let complete = null;
+  while (true) {
+    const { done, value } = await reader.read();
+    if (done) break;
+    buffer += decoder.decode(value, { stream: true });
+    let newline = buffer.indexOf("\n");
+    while (newline >= 0) {
+      const line = buffer.slice(0, newline).trim();
+      buffer = buffer.slice(newline + 1);
+      if (line) {
+        const event = JSON.parse(line);
+        if (event.event === "error") {
+          throw new Error(event.detail || "Processing failed.");
+        }
+        onProgress?.(event);
+        if (event.event === "complete") {
+          complete = event.result || event;
+        }
+      }
+      newline = buffer.indexOf("\n");
+    }
+  }
+  const leftover = buffer.trim();
+  if (leftover) {
+    const event = JSON.parse(leftover);
+    if (event.event === "error") {
+      throw new Error(event.detail || "Processing failed.");
+    }
+    onProgress?.(event);
+    if (event.event === "complete") {
+      complete = event.result || event;
+    }
+  }
+  if (!complete) {
+    throw new Error("Processing stopped before it finished.");
+  }
+  return complete;
+}
+
+async function streamPost(path, body, onProgress) {
+  let res;
+  try {
+    res = await fetch(apiUrl(path), { method: "POST", body, credentials: "omit" });
+  } catch {
+    const hint = API_BASE
+      ? `Cannot reach the API at ${API_BASE}.`
+      : "Cannot reach the API. Set VITE_API_URL if the desk is hosted separately from the backend.";
+    throw new Error(hint);
+  }
+  if (!res.ok) {
+    await failFromResponse(res);
+  }
+  const contentType = res.headers.get("content-type") || "";
+  if (contentType.includes("ndjson") || contentType.includes("jsonl")) {
+    return readNdjson(res, onProgress);
+  }
+  const data = contentType.includes("application/json") ? await res.json() : await res.text();
+  onProgress?.({ event: "complete", result: data, ...data });
+  return data;
 }
 
 export const api = {
@@ -68,10 +143,10 @@ export const api = {
   }),
   deleteSlip: (id) => request(`/api/slips/${id}`, { method: "DELETE" }),
   clearSlips: () => request("/api/slips", { method: "DELETE" }),
-  upload: (files) => {
+  upload: (files, { onProgress } = {}) => {
     const form = new FormData();
     files.forEach((file) => form.append("files", file));
-    return request("/api/upload", { method: "POST", body: form });
+    return streamPost("/api/upload?stream=1", form, onProgress);
   },
   rules: () => request("/api/rules"),
   updateRule: (code, payload) => request(`/api/rules/${code}`, {
@@ -92,10 +167,10 @@ export const api = {
     headers: jsonHeaders,
     body: JSON.stringify({ page_id, reason }),
   }),
-  replacePage: (slipId, pageId, file) => {
+  replacePage: (slipId, pageId, file, { onProgress } = {}) => {
     const form = new FormData();
     form.append("file", file);
-    return request(`/api/slips/${slipId}/pages/${pageId}/replace`, { method: "POST", body: form });
+    return streamPost(`/api/slips/${slipId}/pages/${pageId}/replace?stream=1`, form, onProgress);
   },
   deletePage: (slipId, pageId) => request(`/api/slips/${slipId}/pages/${pageId}`, { method: "DELETE" }),
 };

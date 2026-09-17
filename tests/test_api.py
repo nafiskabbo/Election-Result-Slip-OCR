@@ -27,6 +27,9 @@ def test_upload_and_slips_api(client):
         data = res.json()
         assert data["processed_pages_count"] == 3
         assert len(data["affected_slips"]) == 1
+        assert data["started_at"]
+        assert data["ended_at"]
+        assert data["total_elapsed_seconds"] >= 0
         slip_id = data["affected_slips"][0]
 
     # Get Slip Detail
@@ -37,6 +40,8 @@ def test_upload_and_slips_api(client):
     assert slip_data["total_received_pages"] == 3
     assert slip_data["status"] in ("pending_review", "flagged")
     assert len(slip_data["party_results"]) > 0
+    assert slip_data["processing_started_at"]
+    assert slip_data["processing_ended_at"]
 
     # Manual Vote Override
     pr_id = slip_data["party_results"][0]["id"]

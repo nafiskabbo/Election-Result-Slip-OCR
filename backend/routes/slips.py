@@ -1,4 +1,5 @@
 import os
+import time
 import uuid
 from datetime import datetime, timezone
 from typing import List, Optional
@@ -13,6 +14,7 @@ from backend.models import (
 )
 from backend.ocr_engine import LOW_VOTE_CONFIDENCE, OCREngine
 from backend.page_pipeline import persist_enhanced_page
+from backend.process_timing import iso_utc, make_event, ndjson_stream
 from backend.validation_engine import ValidationEngine
 from backend.audit_service import AuditService
 from backend.routes.auth import ACTIVE_USER_STATE
@@ -87,6 +89,7 @@ def list_slips(
         d["has_errors"] = "fail" in val_statuses
         d["has_warnings"] = "warn" in val_statuses
         d["uploaded_at"] = d.get("created_at")
+        d["processing_started_at"] = d.get("processing_started_at") or d.get("created_at")
         d["is_vote_related"] = _vote_related_flag(d)
         if not d["is_vote_related"]:
             d["total_valid_votes"] = 0
@@ -111,6 +114,7 @@ def get_slip_detail(slip_id: str):
 
     slip_dict = dict(slip)
     slip_dict["uploaded_at"] = slip_dict.get("created_at")
+    slip_dict["processing_started_at"] = slip_dict.get("processing_started_at") or slip_dict.get("created_at")
     slip_dict["is_vote_related"] = _vote_related_flag(slip_dict)
 
     # Pages
@@ -384,7 +388,12 @@ def flag_slip(slip_id: str, action: SlipStatusAction):
 
 
 @router.post("/{slip_id}/pages/{page_id}/replace")
-async def replace_page(slip_id: str, page_id: str, file: UploadFile = File(...)):
+async def replace_page(
+    slip_id: str,
+    page_id: str,
+    file: UploadFile = File(...),
+    stream: bool = Query(False),
+):
     conn = get_db_connection()
     cursor = conn.cursor()
     cursor.execute("SELECT id FROM slips WHERE id = ?", (slip_id,))
@@ -410,37 +419,114 @@ async def replace_page(slip_id: str, page_id: str, file: UploadFile = File(...))
         fh.write(content)
     raw_path = f"storage/raw/{raw_filename}"
     mime_type = file.content_type or "application/octet-stream"
+    original_filename = file.filename or "page.jpg"
 
-    try:
-        _enh, extracted_data, enh_path, thumb_path = persist_enhanced_page(
-            str(disk_raw),
-            file.filename or "page.jpg",
-            0,
-            enhancer=enhancer,
-            ocr_engine=ocr_engine,
-        )
-        result = grouping_engine.replace_extracted_page(
-            page_id=page_id,
-            extracted_data=extracted_data,
-            raw_file_path=raw_path,
-            enhanced_file_path=enh_path,
-            thumb_path=thumb_path,
-            file_size=len(content),
-            mime_type=mime_type,
-            user_id=ACTIVE_USER_STATE["id"],
-        )
-    except ValueError as exc:
-        raise HTTPException(status_code=404, detail=str(exc)) from exc
+    def run(emit=None):
+        t0 = time.time()
+        started_at = iso_utc()
+        if emit:
+            emit(make_event(
+                "started",
+                t0=t0,
+                started_at=started_at,
+                done=0,
+                total=1,
+                filename=original_filename,
+                file_count=1,
+                page_count=1,
+            ))
 
-    _delete_storage_files(result.get("old_paths") or [])
-    validation_engine.evaluate_slip(slip_id)
-    return {
-        "message": "Page image replaced",
-        "slip_id": slip_id,
-        "page_id": page_id,
-        "is_vote_related": bool(extracted_data.get("is_vote_related", True)),
-        "grouping": result.get("grouping"),
-    }
+        def on_stage(stage):
+            if emit:
+                emit(make_event(
+                    stage,
+                    t0=t0,
+                    started_at=started_at,
+                    done=0,
+                    total=1,
+                    filename=original_filename,
+                ))
+
+        try:
+            _enh, extracted_data, enh_path, thumb_path = persist_enhanced_page(
+                str(disk_raw),
+                original_filename,
+                0,
+                enhancer=enhancer,
+                ocr_engine=ocr_engine,
+                on_stage=on_stage,
+            )
+            if emit:
+                emit(make_event(
+                    "grouping",
+                    t0=t0,
+                    started_at=started_at,
+                    done=0,
+                    total=1,
+                    filename=original_filename,
+                ))
+            result = grouping_engine.replace_extracted_page(
+                page_id=page_id,
+                extracted_data=extracted_data,
+                raw_file_path=raw_path,
+                enhanced_file_path=enh_path,
+                thumb_path=thumb_path,
+                file_size=len(content),
+                mime_type=mime_type,
+                user_id=ACTIVE_USER_STATE["id"],
+            )
+        except ValueError as exc:
+            if emit:
+                emit({"event": "error", "detail": str(exc)})
+                return None
+            raise HTTPException(status_code=404, detail=str(exc)) from exc
+
+        _delete_storage_files(result.get("old_paths") or [])
+        if emit:
+            emit(make_event(
+                "checking",
+                t0=t0,
+                started_at=started_at,
+                done=1,
+                total=1,
+                filename=original_filename,
+            ))
+        validation_engine.evaluate_slip(slip_id)
+        ended_at = iso_utc()
+        grouping_engine.stamp_processing_window([slip_id], started_at, ended_at)
+        total_time = round(time.time() - t0, 3)
+        payload = {
+            "message": "Page image replaced",
+            "slip_id": slip_id,
+            "page_id": page_id,
+            "is_vote_related": bool(extracted_data.get("is_vote_related", True)),
+            "grouping": result.get("grouping"),
+            "started_at": started_at,
+            "ended_at": ended_at,
+            "total_elapsed_seconds": total_time,
+        }
+        if emit:
+            emit({
+                **make_event(
+                    "complete",
+                    t0=t0,
+                    started_at=started_at,
+                    done=1,
+                    total=1,
+                    filename=original_filename,
+                    elapsed=total_time,
+                    remaining_seconds=0,
+                    estimated_end_at=ended_at,
+                    percent=100,
+                ),
+                "ended_at": ended_at,
+                "result": payload,
+            })
+        return payload
+
+    if stream:
+        return ndjson_stream(lambda emit: run(emit))
+    return run()
 
 
 @router.delete("/{slip_id}/pages/{page_id}")

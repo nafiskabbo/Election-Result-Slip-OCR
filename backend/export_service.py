@@ -34,7 +34,8 @@ class ExportService:
             "Slip ID", "Reference", "Ballot Type", "Election", "Province", "Municipality",
             "Voting District", "Station Name", "Registered Voters", "Status",
             "Valid Votes", "Spoilt Votes", "Total Votes Cast", "Special Votes",
-            "Pages Expected", "Pages Received", "Approved By", "Approved At", "Uploaded At"
+            "Pages Expected", "Pages Received", "Approved By", "Approved At",
+            "Processing Started At", "Processing Ended At", "Uploaded At"
         ])
 
         for s in slips:
@@ -44,7 +45,9 @@ class ExportService:
                 s["station_name"] or "", s["registered_voters"], s["status"],
                 s["total_valid_votes"], s["total_spoilt_votes"], s["total_votes_cast"],
                 s["special_votes"], s["total_expected_pages"], s["total_received_pages"],
-                s["approved_by"] or "", s["approved_at"] or "", s["created_at"]
+                s["approved_by"] or "", s["approved_at"] or "",
+                s.get("processing_started_at") or "", s.get("processing_ended_at") or "",
+                s["created_at"]
             ])
 
         conn.close()

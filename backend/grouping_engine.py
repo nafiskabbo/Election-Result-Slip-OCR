@@ -48,6 +48,28 @@ class GroupingEngine:
     def __init__(self):
         pass
 
+    def stamp_processing_window(self, slip_ids, started_at: str, ended_at: str) -> None:
+        ids = [slip_id for slip_id in (slip_ids or []) if slip_id]
+        if not ids or not started_at or not ended_at:
+            return
+        conn = get_db_connection()
+        try:
+            cursor = conn.cursor()
+            for slip_id in ids:
+                cursor.execute(
+                    """
+                    UPDATE slips SET
+                        processing_started_at = ?,
+                        processing_ended_at = ?,
+                        updated_at = ?
+                    WHERE id = ?
+                    """,
+                    (started_at, ended_at, ended_at, slip_id),
+                )
+            conn.commit()
+        finally:
+            conn.close()
+
     def process_extracted_page(
         self,
         extracted_data: Dict[str, Any],
@@ -56,7 +78,8 @@ class GroupingEngine:
         thumb_path: str,
         file_size: int,
         mime_type: str,
-        user_id: str = "usr_operator"
+        user_id: str = "usr_operator",
+        processing_started_at: Optional[str] = None,
     ) -> Tuple[str, str, Dict[str, Any]]:
         """
         Processes a newly uploaded and enhanced page:
@@ -67,6 +90,7 @@ class GroupingEngine:
         conn = get_db_connection()
         cursor = conn.cursor()
         now = datetime.now(timezone.utc).isoformat()
+        started_at = processing_started_at or now
 
         slip_ref = extracted_data["slip_reference"]
         vd = extracted_data["voting_district"]
@@ -153,8 +177,8 @@ class GroupingEngine:
                     presiding_officer_name, presiding_officer_signature_detected,
                     total_valid_votes, total_spoilt_votes, total_votes_cast,
                     special_votes, section_24a_votes, total_expected_pages, total_received_pages,
-                    is_vote_related, created_at, updated_at
-                ) VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?)
+                    is_vote_related, created_at, updated_at, processing_started_at
+                ) VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?)
             """, (
                 slip_id, slip_ref, ballot_type, extracted_data["election_name"],
                 extracted_data["province"], extracted_data["municipality"],
@@ -167,7 +191,7 @@ class GroupingEngine:
                 extracted_data.get("total_votes_cast", 0),
                 extracted_data.get("special_votes", 0),
                 extracted_data.get("section_24a_votes", 0),
-                page_total, 0, is_vote_related, now, now
+                page_total, 0, is_vote_related, now, now, started_at
             ))
 
         # Insert the page record
@@ -667,14 +691,16 @@ class GroupingEngine:
                 voting_district, station_name, registered_voters, status,
                 presiding_officer_name, total_valid_votes, total_spoilt_votes, total_votes_cast,
                 special_votes, section_24a_votes, total_expected_pages, total_received_pages,
-                created_at, updated_at
-            ) VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?)
+                created_at, updated_at, processing_started_at, processing_ended_at
+            ) VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?)
         """, (
             new_slip_id, new_slip_ref, old_slip["ballot_type"], old_slip["election_name"],
             old_slip["province"], old_slip["municipality"], old_slip["voting_district"],
             old_slip["station_name"], old_slip["registered_voters"],
             SlipStatusEnum.INCOMPLETE.value, old_slip["presiding_officer_name"],
-            0, 0, 0, 0, 0, page["page_total"], 1, now, now
+            0, 0, 0, 0, 0, page["page_total"], 1, now, now,
+            old_slip.get("processing_started_at") or now,
+            old_slip.get("processing_ended_at"),
         ))
 
         # Reassign page and party results
