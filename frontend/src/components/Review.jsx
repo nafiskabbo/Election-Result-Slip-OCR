@@ -1,8 +1,9 @@
-import { useEffect, useMemo, useState } from "react";
+import { useEffect, useMemo, useRef, useState } from "react";
 import { api, apiUrl, fileUrl, statusLabel } from "../api.js";
 import { formatExactTime, formatRelativeTime } from "../time.js";
 import Viewer from "./Viewer.jsx";
 import Prompt from "./Prompt.jsx";
+import Sheet from "./Sheet.jsx";
 import { Icon } from "./Icons.jsx";
 
 export default function Review({ slip, mobileTab = "photo", onReload, onInbox, notify }) {
@@ -10,6 +11,9 @@ export default function Review({ slip, mobileTab = "photo", onReload, onInbox, n
   const [highlight, setHighlight] = useState(null);
   const [prompt, setPrompt] = useState(null);
   const [draft, setDraft] = useState(slip || null);
+  const [editOpen, setEditOpen] = useState(false);
+  const [pageBusy, setPageBusy] = useState(false);
+  const replaceInputRef = useRef(null);
   const active = draft || slip;
 
   useEffect(() => {
@@ -41,6 +45,7 @@ export default function Review({ slip, mobileTab = "photo", onReload, onInbox, n
   }
 
   const page = active.pages?.[pageIndex] || active.pages?.[0];
+  const voteRelated = active.is_vote_related !== false;
   const complete = active.total_received_pages >= active.total_expected_pages;
   const partySum = (active.party_results || []).reduce((acc, row) => acc + (row.votes || 0), 0);
   const turnout = active.registered_voters
@@ -151,8 +156,46 @@ export default function Review({ slip, mobileTab = "photo", onReload, onInbox, n
     },
   });
 
-  const approveDisabled = !complete || active.has_errors || unchecked.length > 0;
-  const approveTitle = !complete
+  const replacePage = async (file) => {
+    if (!file || !page) return;
+    setPageBusy(true);
+    try {
+      await api.replacePage(active.id, page.id, file);
+      setEditOpen(false);
+      notify("Page image replaced", "pass");
+      await onReload(active.id);
+    } catch (err) {
+      notify(err.message, "fail");
+    } finally {
+      setPageBusy(false);
+    }
+  };
+
+  const removePage = async () => {
+    if (!page) return;
+    if (!window.confirm("Remove this page image? This cannot be undone.")) return;
+    setPageBusy(true);
+    try {
+      const result = await api.deletePage(active.id, page.id);
+      setEditOpen(false);
+      if (result.slip_deleted) {
+        notify("Page removed", "pass");
+        onInbox();
+        return;
+      }
+      notify("Page removed", "pass");
+      await onReload(active.id);
+    } catch (err) {
+      notify(err.message, "fail");
+    } finally {
+      setPageBusy(false);
+    }
+  };
+
+  const approveDisabled = !voteRelated || !complete || active.has_errors || unchecked.length > 0;
+  const approveTitle = !voteRelated
+    ? "This page is not a result slip"
+    : !complete
     ? "Missing pages"
     : active.has_errors
       ? "Fix failed checks first"
@@ -163,16 +206,20 @@ export default function Review({ slip, mobileTab = "photo", onReload, onInbox, n
   const countsBody = (
     <div className="form-body">
       <div className="meta">
-        <div className="reg">
-          <span className="sub">Registered</span>
-          <b>{active.registered_voters}</b>
-        </div>
+        {voteRelated ? (
+          <div className="reg">
+            <span className="sub">Registered</span>
+            <b>{active.registered_voters}</b>
+          </div>
+        ) : null}
         <span className={`chip ${(active.ballot_type || "").toLowerCase()}`}>{active.ballot_type}</span>
         {" "}
         <span className={`chip ${active.status}`}>{statusLabel(active.status)}</span>
-        <h2>{active.station_name || "Station unread"}</h2>
+        <h2>{active.station_name || (voteRelated ? "Station unread" : "No voting content")}</h2>
         <div className="sub">
-          VD {active.voting_district} · {active.slip_reference}
+          {voteRelated
+            ? `VD ${active.voting_district} · ${active.slip_reference}`
+            : active.slip_reference}
           {active.municipality ? ` · ${active.municipality}` : ""}
           {active.province ? ` · ${active.province}` : ""}
         </div>
@@ -198,97 +245,106 @@ export default function Review({ slip, mobileTab = "photo", onReload, onInbox, n
         ) : null}
       </div>
 
-      {complete ? (
-        <div className="banner good">
-          <b>Complete · {active.total_expected_pages}/{active.total_expected_pages}</b>
-        </div>
-      ) : (
-        <div className="banner bad">
-          <b>Missing page {missing.join(", ")}</b>
-          <span className="sub">{active.total_received_pages}/{active.total_expected_pages}</span>
-        </div>
-      )}
+      {voteRelated ? (
+        <>
+          {complete ? (
+            <div className="banner good">
+              <b>Complete · {active.total_expected_pages}/{active.total_expected_pages}</b>
+            </div>
+          ) : (
+            <div className="banner bad">
+              <b>Missing page {missing.join(", ")}</b>
+              <span className="sub">{active.total_received_pages}/{active.total_expected_pages}</span>
+            </div>
+          )}
 
-      {unchecked.length > 0 && (
-        <div className="banner warn">
-          <b>Check {unchecked.length} low-confidence count{unchecked.length === 1 ? "" : "s"}</b>
-          <button type="button" className="btn ghost" onClick={confirmLow}>Confirm highlighted</button>
-        </div>
-      )}
+          {unchecked.length > 0 && (
+            <div className="banner warn">
+              <b>Check {unchecked.length} low-confidence count{unchecked.length === 1 ? "" : "s"}</b>
+              <button type="button" className="btn ghost" onClick={confirmLow}>Confirm highlighted</button>
+            </div>
+          )}
 
-      <div className="table-wrap votes-wrap">
-        <table className="data votes">
-          <thead>
-            <tr>
-              <th>Party</th>
-              <th className="num">Votes</th>
-              <th className="num">%</th>
-              <th>Sig</th>
-            </tr>
-          </thead>
-          <tbody>
-            {(active.party_results || []).map((row) => (
-              <tr
-                key={row.id}
-                className={needsCheck(row) ? "needs-check" : ""}
-                onPointerEnter={() => {
-                  try { setHighlight(JSON.parse(row.bbox_json || "{}")); } catch { setHighlight(null); }
-                }}
-                onPointerLeave={() => setHighlight(null)}
-              >
-                <td>
-                  {row.party_name}
-                  <div className="sub">{row.party_code}</div>
-                </td>
-                <td className="num">
-                  <input
-                    type="number"
-                    inputMode="numeric"
-                    defaultValue={row.votes}
-                    onBlur={(e) => {
-                      if (String(e.target.value) !== String(row.votes)) changeVotes(row, e.target.value);
+          <div className="table-wrap votes-wrap">
+            <table className="data votes">
+              <thead>
+                <tr>
+                  <th>Party</th>
+                  <th className="num">Votes</th>
+                  <th className="num">%</th>
+                  <th>Sig</th>
+                </tr>
+              </thead>
+              <tbody>
+                {(active.party_results || []).map((row) => (
+                  <tr
+                    key={row.id}
+                    className={needsCheck(row) ? "needs-check" : ""}
+                    onPointerEnter={() => {
+                      try { setHighlight(JSON.parse(row.bbox_json || "{}")); } catch { setHighlight(null); }
                     }}
-                  />
-                </td>
-                <td className={`num conf ${confClass(row)}`}>{Math.round((row.confidence_score || 0) * 100)}</td>
-                <td>{row.signature_detected ? "✓" : "—"}</td>
-              </tr>
+                    onPointerLeave={() => setHighlight(null)}
+                  >
+                    <td>
+                      {row.party_name}
+                      <div className="sub">{row.party_code}</div>
+                    </td>
+                    <td className="num">
+                      <input
+                        type="number"
+                        inputMode="numeric"
+                        defaultValue={row.votes}
+                        onBlur={(e) => {
+                          if (String(e.target.value) !== String(row.votes)) changeVotes(row, e.target.value);
+                        }}
+                      />
+                    </td>
+                    <td className={`num conf ${confClass(row)}`}>{Math.round((row.confidence_score || 0) * 100)}</td>
+                    <td>{row.signature_detected ? "✓" : "—"}</td>
+                  </tr>
+                ))}
+              </tbody>
+            </table>
+          </div>
+
+          <div className="recon">
+            <div className="recon-row">
+              <span>Party total</span>
+              <strong>{partySum}</strong>
+            </div>
+            <div className="recon-row">
+              <span>Valid</span>
+              <input type="number" inputMode="numeric" defaultValue={active.total_valid_votes} onBlur={(e) => changeField("total_valid_votes", parseInt(e.target.value, 10) || 0)} />
+            </div>
+            <div className="recon-row">
+              <span>Spoilt</span>
+              <input type="number" inputMode="numeric" defaultValue={active.total_spoilt_votes} onBlur={(e) => changeField("total_spoilt_votes", parseInt(e.target.value, 10) || 0)} />
+            </div>
+            <div className="recon-row">
+              <span>Cast</span>
+              <input type="number" inputMode="numeric" defaultValue={active.total_votes_cast} onBlur={(e) => changeField("total_votes_cast", parseInt(e.target.value, 10) || 0)} />
+            </div>
+            <div className="recon-row">
+              <span>Turnout</span>
+              <strong>{turnout}%</strong>
+            </div>
+          </div>
+
+          <ul className="checks">
+            {(active.validation_results || []).map((item) => (
+              <li key={item.rule_code + item.evaluated_at}>
+                <span className={`mark ${item.status}`}>{item.status}</span>
+                <span>{item.message}</span>
+              </li>
             ))}
-          </tbody>
-        </table>
-      </div>
-
-      <div className="recon">
-        <div className="recon-row">
-          <span>Party total</span>
-          <strong>{partySum}</strong>
+          </ul>
+        </>
+      ) : (
+        <div className="banner warn">
+          <b>Nothing related to voting was found on this page</b>
+          <span className="sub">Vote counts are hidden so they are not mistaken for a result slip. Replace or remove the image if this was uploaded by mistake.</span>
         </div>
-        <div className="recon-row">
-          <span>Valid</span>
-          <input type="number" inputMode="numeric" defaultValue={active.total_valid_votes} onBlur={(e) => changeField("total_valid_votes", parseInt(e.target.value, 10) || 0)} />
-        </div>
-        <div className="recon-row">
-          <span>Spoilt</span>
-          <input type="number" inputMode="numeric" defaultValue={active.total_spoilt_votes} onBlur={(e) => changeField("total_spoilt_votes", parseInt(e.target.value, 10) || 0)} />
-        </div>
-        <div className="recon-row">
-          <span>Cast</span>
-          <input type="number" inputMode="numeric" defaultValue={active.total_votes_cast} onBlur={(e) => changeField("total_votes_cast", parseInt(e.target.value, 10) || 0)} />
-        </div>
-        <div className="recon-row">
-          <span>Turnout</span>
-          <strong>{turnout}%</strong>
-        </div>
-      </div>
-
-      <ul className="checks">
-        {(active.validation_results || []).map((item) => (
-          <li key={item.rule_code + item.evaluated_at}>
-            <span className={`mark ${item.status}`}>{item.status}</span>
-            <span>{item.message}</span>
-          </li>
-        ))}
-      </ul>
+      )}
     </div>
   );
 
@@ -300,15 +356,17 @@ export default function Review({ slip, mobileTab = "photo", onReload, onInbox, n
       <button type="button" className="btn warn icon-text" onClick={flagSlip}>
         <Icon name="flag" size={16} /> Flag
       </button>
-      <button
-        type="button"
-        className="btn pass icon-text"
-        disabled={approveDisabled}
-        title={approveTitle}
-        onClick={approve}
-      >
-        <Icon name="approve" size={16} /> Approve
-      </button>
+      {voteRelated ? (
+        <button
+          type="button"
+          className="btn pass icon-text"
+          disabled={approveDisabled}
+          title={approveTitle}
+          onClick={approve}
+        >
+          <Icon name="approve" size={16} /> Approve
+        </button>
+      ) : null}
     </>
   );
 
@@ -330,6 +388,7 @@ export default function Review({ slip, mobileTab = "photo", onReload, onInbox, n
             pageTotal={page?.page_total || active.pages?.length || 1}
             onPrevPage={() => setPageIndex((i) => Math.max(0, i - 1))}
             onNextPage={() => setPageIndex((i) => Math.min((active.pages?.length || 1) - 1, i + 1))}
+            onEdit={() => setEditOpen(true)}
           />
         </div>
 
@@ -337,6 +396,9 @@ export default function Review({ slip, mobileTab = "photo", onReload, onInbox, n
           <div className="pane-bar counts-bar">
             <strong>Counts</strong>
             <div className="tools mobile-only">
+              <button type="button" className="icon-btn" aria-label="Edit page image" title="Edit page image" onClick={() => setEditOpen(true)}>
+                <Icon name="edit" size={18} />
+              </button>
               <button type="button" className="icon-btn" aria-label="Link page" title="Link page" onClick={linkPage}>
                 <Icon name="link" size={18} />
               </button>
@@ -355,6 +417,9 @@ export default function Review({ slip, mobileTab = "photo", onReload, onInbox, n
               </a>
             </div>
             <div className="tools desktop-only-flex">
+              <button type="button" className="btn ghost icon-text" onClick={() => setEditOpen(true)}>
+                <Icon name="edit" size={16} /> Edit image
+              </button>
               <button type="button" className="btn ghost" onClick={linkPage}>Link page</button>
               <button type="button" className="btn ghost" onClick={unlinkPage}>Unlink page</button>
               <a className="btn ghost" href={apiUrl(`/api/export/slips/${active.id}/pdf`)} target="_blank" rel="noreferrer">Export PDF</a>
@@ -391,6 +456,44 @@ export default function Review({ slip, mobileTab = "photo", onReload, onInbox, n
           }}
         />
       )}
+
+      <input
+        ref={replaceInputRef}
+        type="file"
+        accept="image/*,.pdf,application/pdf"
+        hidden
+        onChange={(e) => {
+          const file = e.target.files?.[0];
+          e.target.value = "";
+          if (file) replacePage(file);
+        }}
+      />
+
+      <Sheet
+        title="Edit page image"
+        open={editOpen}
+        onClose={() => { if (!pageBusy) setEditOpen(false); }}
+        footer={(
+          <button
+            type="button"
+            className="btn danger"
+            disabled={pageBusy || !page}
+            onClick={removePage}
+          >
+            Remove this page
+          </button>
+        )}
+      >
+        <p className="sub">Replace the photo if the capture is wrong, or remove it from this slip.</p>
+        <button
+          type="button"
+          className="btn"
+          disabled={pageBusy || !page}
+          onClick={() => replaceInputRef.current?.click()}
+        >
+          {pageBusy ? "Working…" : "Replace image"}
+        </button>
+      </Sheet>
     </section>
   );
 }

@@ -1,4 +1,5 @@
 import { useEffect, useRef, useState } from "react";
+import { Icon } from "./Icons.jsx";
 
 function touchDistance(a, b) {
   return Math.hypot(a.clientX - b.clientX, a.clientY - b.clientY);
@@ -11,6 +12,7 @@ export default function Viewer({
   pageTotal,
   onPrevPage,
   onNextPage,
+  onEdit,
 }) {
   const wrapRef = useRef(null);
   const imgRef = useRef(null);
@@ -157,6 +159,11 @@ export default function Viewer({
           <button className="icon-btn" type="button" aria-label="Zoom out" onClick={() => setScale((s) => Math.max(0.4, s * 0.8))}>−</button>
           <button className="icon-btn" type="button" aria-label="Fit" onClick={fit}>Fit</button>
           <button className="icon-btn" type="button" aria-label="Rotate" onClick={() => setRotation((r) => r + 90)}>⟲</button>
+          {onEdit ? (
+            <button className="icon-btn" type="button" aria-label="Edit page image" title="Edit page image" onClick={onEdit}>
+              <Icon name="edit" size={16} />
+            </button>
+          ) : null}
         </div>
       </div>
       <div

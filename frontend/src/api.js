@@ -92,6 +92,12 @@ export const api = {
     headers: jsonHeaders,
     body: JSON.stringify({ page_id, reason }),
   }),
+  replacePage: (slipId, pageId, file) => {
+    const form = new FormData();
+    form.append("file", file);
+    return request(`/api/slips/${slipId}/pages/${pageId}/replace`, { method: "POST", body: form });
+  },
+  deletePage: (slipId, pageId) => request(`/api/slips/${slipId}/pages/${pageId}`, { method: "DELETE" }),
 };
 
 export function fileUrl(path) {

@@ -1,22 +1,51 @@
-import json
+import os
+import uuid
 from datetime import datetime, timezone
 from typing import List, Optional
-from fastapi import APIRouter, HTTPException, Query
-from backend.config import DATA_DIR
+from fastapi import APIRouter, File, HTTPException, Query, UploadFile
+from backend.config import DATA_DIR, PRODUCTION_RAPIDOCR_MODEL, STORAGE_DIR, ensure_dirs
 from backend.database import get_db_connection
+from backend.grouping_engine import GroupingEngine
+from backend.image_enhancer import ImageEnhancer
 from backend.models import (
     SlipSummaryResponse, SlipDetailResponse, SlipFieldUpdate,
     PartyResultUpdate, SlipStatusAction, SlipStatusEnum
 )
+from backend.ocr_engine import LOW_VOTE_CONFIDENCE, OCREngine
+from backend.page_pipeline import persist_enhanced_page
 from backend.validation_engine import ValidationEngine
 from backend.audit_service import AuditService
-from backend.ocr_engine import LOW_VOTE_CONFIDENCE
 from backend.routes.auth import ACTIVE_USER_STATE
 
 router = APIRouter(prefix="/api/slips", tags=["Slips Management & Verification"])
 
 validation_engine = ValidationEngine()
 audit_service = AuditService()
+grouping_engine = GroupingEngine()
+enhancer = ImageEnhancer()
+ocr_engine = OCREngine(rapidocr_model=PRODUCTION_RAPIDOCR_MODEL)
+
+
+def _vote_related_flag(row) -> bool:
+    if row.get("is_vote_related") is False:
+        return False
+    ref = str(row.get("slip_reference") or "")
+    vd = str(row.get("voting_district") or "").upper()
+    if vd == "UNKNOWN" and ref.startswith("UNREAD"):
+        return False
+    return True
+
+
+def _delete_storage_files(paths):
+    for rel in paths or []:
+        if not rel:
+            continue
+        path = DATA_DIR / rel
+        try:
+            if path.is_file():
+                path.unlink()
+        except OSError:
+            pass
 
 @router.get("", response_model=List[SlipSummaryResponse])
 def list_slips(
@@ -58,6 +87,12 @@ def list_slips(
         d["has_errors"] = "fail" in val_statuses
         d["has_warnings"] = "warn" in val_statuses
         d["uploaded_at"] = d.get("created_at")
+        d["is_vote_related"] = _vote_related_flag(d)
+        if not d["is_vote_related"]:
+            d["total_valid_votes"] = 0
+            d["total_spoilt_votes"] = 0
+            d["total_votes_cast"] = 0
+            d["registered_voters"] = 0
         slips.append(SlipSummaryResponse(**d))
 
     conn.close()
@@ -76,6 +111,7 @@ def get_slip_detail(slip_id: str):
 
     slip_dict = dict(slip)
     slip_dict["uploaded_at"] = slip_dict.get("created_at")
+    slip_dict["is_vote_related"] = _vote_related_flag(slip_dict)
 
     # Pages
     cursor.execute("SELECT * FROM slip_pages WHERE slip_id = ? ORDER BY page_number ASC", (slip_id,))
@@ -91,6 +127,12 @@ def get_slip_detail(slip_id: str):
         ORDER BY sp.page_number ASC, pr.row_index ASC
     """, (slip_id,))
     party_results = [dict(pr) for pr in cursor.fetchall()]
+    if not slip_dict["is_vote_related"]:
+        party_results = []
+        slip_dict["total_valid_votes"] = 0
+        slip_dict["total_spoilt_votes"] = 0
+        slip_dict["total_votes_cast"] = 0
+        slip_dict["registered_voters"] = 0
     slip_dict["party_results"] = party_results
 
     # Validation Results
@@ -201,6 +243,13 @@ def approve_slip(slip_id: str):
     if not slip:
         conn.close()
         raise HTTPException(status_code=404, detail=f"Slip {slip_id} not found.")
+
+    if slip.get("is_vote_related") is False:
+        conn.close()
+        raise HTTPException(
+            status_code=400,
+            detail="APPROVAL BLOCKED: This page is not an election result slip.",
+        )
 
     # Rule 2 Enforcement: Block approval if slip is incomplete
     if slip["status"] == SlipStatusEnum.INCOMPLETE.value or slip["total_received_pages"] < slip["total_expected_pages"]:
@@ -334,6 +383,96 @@ def flag_slip(slip_id: str, action: SlipStatusAction):
     return {"message": "Slip flagged for review", "slip_id": slip_id, "status": "flagged"}
 
 
+@router.post("/{slip_id}/pages/{page_id}/replace")
+async def replace_page(slip_id: str, page_id: str, file: UploadFile = File(...)):
+    conn = get_db_connection()
+    cursor = conn.cursor()
+    cursor.execute("SELECT id FROM slips WHERE id = ?", (slip_id,))
+    slip = cursor.fetchone()
+    if not slip:
+        conn.close()
+        raise HTTPException(status_code=404, detail=f"Slip {slip_id} not found.")
+    cursor.execute("SELECT id FROM slip_pages WHERE id = ? AND slip_id = ?", (page_id, slip_id))
+    page = cursor.fetchone()
+    conn.close()
+    if not page:
+        raise HTTPException(status_code=404, detail=f"Page {page_id} not found on this slip.")
+
+    ext = os.path.splitext(file.filename or "")[1].lower()
+    if ext not in [".jpg", ".jpeg", ".png", ".pdf"]:
+        raise HTTPException(status_code=400, detail="Replace the page with a JPEG, PNG, or PDF.")
+
+    ensure_dirs()
+    raw_filename = f"{uuid.uuid4().hex[:10]}_{file.filename}"
+    disk_raw = STORAGE_DIR / "raw" / raw_filename
+    content = await file.read()
+    with open(disk_raw, "wb") as fh:
+        fh.write(content)
+    raw_path = f"storage/raw/{raw_filename}"
+    mime_type = file.content_type or "application/octet-stream"
+
+    try:
+        _enh, extracted_data, enh_path, thumb_path = persist_enhanced_page(
+            str(disk_raw),
+            file.filename or "page.jpg",
+            0,
+            enhancer=enhancer,
+            ocr_engine=ocr_engine,
+        )
+        result = grouping_engine.replace_extracted_page(
+            page_id=page_id,
+            extracted_data=extracted_data,
+            raw_file_path=raw_path,
+            enhanced_file_path=enh_path,
+            thumb_path=thumb_path,
+            file_size=len(content),
+            mime_type=mime_type,
+            user_id=ACTIVE_USER_STATE["id"],
+        )
+    except ValueError as exc:
+        raise HTTPException(status_code=404, detail=str(exc)) from exc
+
+    _delete_storage_files(result.get("old_paths") or [])
+    validation_engine.evaluate_slip(slip_id)
+    return {
+        "message": "Page image replaced",
+        "slip_id": slip_id,
+        "page_id": page_id,
+        "is_vote_related": bool(extracted_data.get("is_vote_related", True)),
+        "grouping": result.get("grouping"),
+    }
+
+
+@router.delete("/{slip_id}/pages/{page_id}")
+def delete_page(slip_id: str, page_id: str):
+    conn = get_db_connection()
+    cursor = conn.cursor()
+    cursor.execute("SELECT id FROM slip_pages WHERE id = ? AND slip_id = ?", (page_id, slip_id))
+    page = cursor.fetchone()
+    conn.close()
+    if not page:
+        raise HTTPException(status_code=404, detail=f"Page {page_id} not found on this slip.")
+
+    try:
+        result = grouping_engine.remove_page(
+            page_id=page_id,
+            user_id=ACTIVE_USER_STATE["id"],
+            reason="Operator removed a captured page image",
+        )
+    except ValueError as exc:
+        raise HTTPException(status_code=404, detail=str(exc)) from exc
+
+    _delete_storage_files(result.get("old_paths") or [])
+    if not result.get("slip_deleted"):
+        validation_engine.evaluate_slip(slip_id)
+    return {
+        "message": "Page removed" if not result.get("slip_deleted") else "Page removed and slip deleted",
+        "slip_id": slip_id,
+        "page_id": page_id,
+        "slip_deleted": bool(result.get("slip_deleted")),
+    }
+
+
 @router.delete("/{slip_id}")
 def delete_slip(slip_id: str):
     conn = get_db_connection()
@@ -355,17 +494,9 @@ def delete_slip(slip_id: str):
     conn.commit()
     conn.close()
 
-    for page in pages:
-        for key in ("raw_file_path", "enhanced_file_path", "thumbnail_path"):
-            rel = page.get(key)
-            if not rel:
-                continue
-            path = DATA_DIR / rel
-            try:
-                if path.is_file():
-                    path.unlink()
-            except OSError:
-                pass
+    _delete_storage_files(
+        [page.get(key) for page in pages for key in ("raw_file_path", "enhanced_file_path", "thumbnail_path")]
+    )
 
     audit_service.log_event(
         user_id=ACTIVE_USER_STATE["id"],

@@ -443,6 +443,8 @@ table.data tr.national { box-shadow: inset 4px 0 0 var(--national); }
   color: var(--fail);
   border-color: color-mix(in srgb, var(--fail) 35%, var(--rule));
 }
+.chip.unknown { color: var(--muted); }
+.workspace.unknown { border-top: 6px solid var(--rule-strong); }
 .empty {
   padding: 2rem 1rem;
   text-align: center;
@@ -481,6 +483,7 @@ table.data tr.national { box-shadow: inset 4px 0 0 var(--national); }
 .slip-card-actions {
   display: flex;
   align-items: center;
+  gap: 0.25rem;
   flex-shrink: 0;
 }
 .slip-card-top,

@@ -1,3 +1,4 @@
+import uuid
 import cv2
 import numpy as np
 import re
@@ -40,6 +41,46 @@ except ImportError:
 
 # Rows below this must be confirmed in Review before approval.
 LOW_VOTE_CONFIDENCE = 0.72
+
+# Known-slip vote overrides are disabled. If this dict is restored, barcode
+# lookups overwrite OCR votes with hardcoded sample values and hide errors.
+# KNOWN_SLIPS = {
+#     "001335868205982011": {"votes": {"ANC": 19, "DA": 18, "EFF": 6}, ...},
+# }
+
+VOTE_PAGE_HINTS = (
+    "RESULT SLIP",
+    "RESULTS",
+    "VOTES CAST",
+    "VALID VOTES",
+    "SPOILT",
+    "REGISTERED VOTER",
+    "VOTING DISTRICT",
+    "PRESIDING OFFICER",
+    "NATIONAL BALLOT",
+    "PROVINCIAL BALLOT",
+    "REGIONAL BALLOT",
+    "ELECTORAL COMMISSION",
+)
+
+
+def page_looks_like_result_slip(
+    lines: List[str],
+    *,
+    barcode_info: Optional[Dict[str, Any]] = None,
+    voting_district: Optional[str] = None,
+    layout_score: int = 0,
+) -> bool:
+    """True only when the page has identity or printed result-slip evidence."""
+    if barcode_info:
+        return True
+    if voting_district and str(voting_district).strip().upper() not in {"", "UNKNOWN"}:
+        return True
+    if layout_score >= 3:
+        return True
+    blob = " ".join(lines or []).upper()
+    hits = sum(1 for hint in VOTE_PAGE_HINTS if hint in blob)
+    return hits >= 2
 
 PROVINCES = [
     "Eastern Cape", "Free State", "Gauteng", "KwaZulu-Natal", "Limpopo",
@@ -511,6 +552,18 @@ class OCREngine:
             return int(match.group(1)), int(match.group(2))
         return None, None
 
+    def _score_layout(self, layout: List[Tuple[str, str]], blob: str) -> int:
+        score = 0
+        for _, code in layout:
+            token = _norm(code)
+            if token and token in blob:
+                score += 2
+        for name, _ in layout[:8]:
+            token = _norm(name)[:12]
+            if token and token in blob:
+                score += 1
+        return score
+
     def _choose_layout(self, ballot_type: str, page_num: int, lines: List[str]) -> List[Tuple[str, str]]:
         options = PARTY_LAYOUTS.get((ballot_type, page_num), [])
         if not options:
@@ -519,19 +572,37 @@ class OCREngine:
         best = options[0]
         best_score = -1
         for layout in options:
-            score = 0
-            for _, code in layout:
-                token = _norm(code)
-                if token and token in blob:
-                    score += 2
-            for name, _ in layout[:8]:
-                token = _norm(name)[:12]
-                if token and token in blob:
-                    score += 1
+            score = self._score_layout(layout, blob)
             if score > best_score:
                 best_score = score
                 best = layout
         return best
+
+    def _unread_page_payload(self, lines: List[str]) -> Dict[str, Any]:
+        return {
+            "barcode_text": "",
+            "slip_reference": f"UNREAD_{uuid.uuid4().hex[:8].upper()}",
+            "ballot_type": "Unknown",
+            "election_name": "",
+            "province": None,
+            "municipality": None,
+            "voting_district": "UNKNOWN",
+            "station_name": None,
+            "registered_voters": 0,
+            "page_number": 1,
+            "page_total": 1,
+            "presiding_officer_name": None,
+            "presiding_officer_signature_detected": False,
+            "total_valid_votes": 0,
+            "total_spoilt_votes": 0,
+            "total_votes_cast": 0,
+            "special_votes": 0,
+            "section_24a_votes": 0,
+            "party_results": [],
+            "full_ocr_lines": list(lines or []),
+            "exception_flags": ["not_a_result_slip"],
+            "is_vote_related": False,
+        }
 
     def _extract_location(self, lines: List[str]) -> Dict[str, Any]:
         blob = " ".join(lines)
@@ -758,9 +829,11 @@ class OCREngine:
             elif "NATIONAL" in joined_upper:
                 ballot_type = "National"
             if not ballot_type:
-                ballot_type = self.detect_header_badge(img) or "Provincial"
+                ballot_type = self.detect_header_badge(img)
             page_num = page_num_ocr or 1
-            page_total = page_total_ocr or {"Provincial": 2, "Regional": 2, "National": 3}.get(ballot_type, 2)
+            page_total = page_total_ocr or (
+                {"Provincial": 2, "Regional": 2, "National": 3}.get(ballot_type, 1) if ballot_type else 1
+            )
 
         location = self._extract_location(header_lines)
         if not location.get("registered_voters"):
@@ -779,12 +852,40 @@ class OCREngine:
         registered_voters = location["registered_voters"]
         officer = location["officer"]
 
-        layout_options = PARTY_LAYOUTS.get((ballot_type, page_num), [])
+        # known = KNOWN_SLIPS.get(raw_barcode_val, {})
+        # province = known.get("province") or location["province"]
+        # station_name = known.get("station") or location["station_name"]
+
+        layout_options = PARTY_LAYOUTS.get((ballot_type, page_num), []) if ballot_type else []
         name_lines = header_lines
-        if len(layout_options) > 1:
-            _, name_lines = self._ocr_region(img, int(h * 0.28), int(w * 0.02), int(h * 0.86), int(w * 0.52))
-            name_lines = header_lines + name_lines
-        parties_template = self._choose_layout(ballot_type, page_num, name_lines)
+        need_name_region = len(layout_options) > 1 or not (
+            barcode_info or (voting_district and voting_district != "UNKNOWN")
+        )
+        if need_name_region:
+            _, extra_names = self._ocr_region(
+                img, int(h * 0.28), int(w * 0.02), int(h * 0.86), int(w * 0.52)
+            )
+            name_lines = header_lines + extra_names
+
+        parties_template: List[Tuple[str, str]] = []
+        layout_score = 0
+        if ballot_type:
+            parties_template = self._choose_layout(ballot_type, page_num, name_lines)
+            layout_score = self._score_layout(parties_template, _norm(" ".join(name_lines)))
+
+        is_vote_related = page_looks_like_result_slip(
+            header_lines + name_lines,
+            barcode_info=barcode_info,
+            voting_district=voting_district,
+            layout_score=layout_score,
+        )
+        if not is_vote_related:
+            return self._unread_page_payload(header_lines + name_lines)
+
+        if not ballot_type:
+            ballot_type = self.detect_header_badge(img) or "Provincial"
+            page_total = page_total_ocr or {"Provincial": 2, "Regional": 2, "National": 3}.get(ballot_type, 2)
+            parties_template = self._choose_layout(ballot_type, page_num, name_lines)
         num_rows = len(parties_template)
 
         is_final_page = page_num == page_total
@@ -1070,4 +1171,5 @@ class OCREngine:
             "party_results": party_results,
             "full_ocr_lines": full_text_lines,
             "exception_flags": exception_flags,
+            "is_vote_related": True,
         }

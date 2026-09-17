@@ -76,3 +76,32 @@ def test_incomplete_slip_approval_blocked_api(client):
     pdf_res = client.get(f"/api/export/slips/{slip_id}/pdf")
     assert pdf_res.status_code == 400
     assert "EXPORT BLOCKED" in pdf_res.json()["detail"]
+
+
+def test_replace_and_remove_page_api(client, tmp_path):
+    import cv2
+    import numpy as np
+
+    blank = tmp_path / "blank.jpg"
+    cv2.imwrite(str(blank), np.full((320, 240, 3), 240, dtype=np.uint8))
+
+    with open("sample_slips/p_1.jpg", "rb") as fh:
+        res = client.post("/api/upload", files=[("files", ("p_1.jpg", fh, "image/jpeg"))])
+    assert res.status_code == 200
+    slip_id = res.json()["affected_slips"][0]
+    page_id = res.json()["pages"][0]["page_id"]
+
+    with open(blank, "rb") as fh:
+        replace_res = client.post(
+            f"/api/slips/{slip_id}/pages/{page_id}/replace",
+            files=[("file", ("blank.jpg", fh, "image/jpeg"))],
+        )
+    assert replace_res.status_code == 200
+    detail = client.get(f"/api/slips/{slip_id}").json()
+    assert detail["is_vote_related"] is False
+    assert detail["party_results"] == []
+
+    delete_res = client.delete(f"/api/slips/{slip_id}/pages/{page_id}")
+    assert delete_res.status_code == 200
+    assert delete_res.json()["slip_deleted"] is True
+    assert client.get(f"/api/slips/{slip_id}").status_code == 404

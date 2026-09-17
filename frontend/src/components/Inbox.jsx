@@ -195,18 +195,28 @@ export default function Inbox({
                     >
                       <strong>{slip.slip_reference}</strong>
                     </button>
-                    <div className="sub">VD {slip.voting_district}</div>
+                    {slip.is_vote_related === false ? (
+                      <div className="sub">Not a result slip</div>
+                    ) : (
+                      <div className="sub">VD {slip.voting_district}</div>
+                    )}
                   </td>
                   <td>
                     <span className={`chip ${(slip.ballot_type || "").toLowerCase()}`}>{slip.ballot_type}</span>
                   </td>
                   <td>
-                    <div>{slip.station_name || "Station unread"}</div>
+                    <div>{slip.station_name || (slip.is_vote_related === false ? "No voting content" : "Station unread")}</div>
                     <div className="sub">{[slip.municipality, slip.province].filter(Boolean).join(", ")}</div>
                   </td>
                   <td className="num">
-                    {slip.total_valid_votes}
-                    <div className="sub">{slip.registered_voters} reg.</div>
+                    {slip.is_vote_related === false ? (
+                      <span className="sub">—</span>
+                    ) : (
+                      <>
+                        {slip.total_valid_votes}
+                        <div className="sub">{slip.registered_voters} reg.</div>
+                      </>
+                    )}
                   </td>
                   <td>
                     <span className={`chip ${complete ? "approved" : "incomplete"}`}>
@@ -228,8 +238,12 @@ export default function Inbox({
                   </td>
                   <td>
                     <div className="row-actions">
-                      <button type="button" className="btn ghost" onClick={() => onOpen(slip.id)}>Open</button>
-                      <button type="button" className="btn ghost" onClick={() => remove(slip)}>Delete</button>
+                      <button type="button" className="icon-btn" aria-label={`Edit ${slip.slip_reference}`} title="Edit" onClick={() => onOpen(slip.id)}>
+                        <Icon name="edit" size={16} />
+                      </button>
+                      <button type="button" className="icon-btn danger" aria-label={`Delete ${slip.slip_reference}`} title="Delete" onClick={() => remove(slip)}>
+                        <Icon name="delete" size={16} />
+                      </button>
                     </div>
                   </td>
                 </tr>
@@ -264,8 +278,12 @@ export default function Inbox({
                     {slip.total_received_pages}/{slip.total_expected_pages}
                   </span>
                 </div>
-                <div className="slip-card-station">{slip.station_name || "Station unread"}</div>
-                <div className="sub">VD {slip.voting_district} · {slip.total_valid_votes} valid</div>
+                <div className="slip-card-station">{slip.station_name || (slip.is_vote_related === false ? "No voting content" : "Station unread")}</div>
+                <div className="sub">
+                  {slip.is_vote_related === false
+                    ? "Nothing related to voting found"
+                    : `VD ${slip.voting_district} · ${slip.total_valid_votes} valid`}
+                </div>
                 {uploaded ? (
                   <div className="sub">
                     Uploaded{" "}
@@ -276,6 +294,14 @@ export default function Inbox({
                 ) : null}
               </button>
               <div className="slip-card-actions">
+                <button
+                  type="button"
+                  className="icon-btn"
+                  aria-label={`Edit ${slip.slip_reference}`}
+                  onClick={() => onOpen(slip.id)}
+                >
+                  <Icon name="edit" size={18} />
+                </button>
                 <button
                   type="button"
                   className="icon-btn danger"

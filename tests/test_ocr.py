@@ -147,3 +147,28 @@ def test_lookup_does_not_inflate_confidence(ocr_engine, enhancer):
     assert 0.99 not in scores
     # Low-confidence or empty-digit rows should still surface for review.
     assert any(s < LOW_VOTE_CONFIDENCE for s in scores) or any(data.get("exception_flags") or [])
+
+
+def test_page_looks_like_result_slip_requires_evidence():
+    from backend.ocr_engine import page_looks_like_result_slip
+
+    assert page_looks_like_result_slip(["random shopping receipt"], layout_score=0) is False
+    assert page_looks_like_result_slip(["hello"], barcode_info={"slip_reference": "001335970900502"}) is True
+    assert page_looks_like_result_slip(["header"], voting_district="76240234") is True
+    assert page_looks_like_result_slip(
+        ["IEC RESULT SLIP", "REGISTERED VOTERS 165"],
+        layout_score=0,
+    ) is True
+    assert page_looks_like_result_slip(["AFRICAN NATIONAL CONGRESS"], layout_score=4) is True
+
+
+def test_blank_image_is_not_treated_as_result_slip(ocr_engine):
+    import numpy as np
+
+    blank = np.full((320, 240, 3), 240, dtype=np.uint8)
+    data = ocr_engine.extract_full_slip_data(blank)
+    assert data["is_vote_related"] is False
+    assert data["party_results"] == []
+    assert data["voting_district"] == "UNKNOWN"
+    assert data["slip_reference"].startswith("UNREAD_")
+    assert "not_a_result_slip" in data["exception_flags"]

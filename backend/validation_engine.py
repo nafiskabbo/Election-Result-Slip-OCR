@@ -19,6 +19,18 @@ class ValidationEngine:
             conn.close()
             raise ValueError(f"Slip {slip_id} not found.")
 
+        if slip.get("is_vote_related") is False:
+            cursor.execute("DELETE FROM validation_results WHERE slip_id = ?", (slip_id,))
+            conn.commit()
+            conn.close()
+            return {
+                "slip_id": slip_id,
+                "is_eligible_for_approval": False,
+                "has_critical_error": False,
+                "has_warning": True,
+                "validation_results": [],
+            }
+
         # Fetch active rules
         cursor.execute("SELECT * FROM validation_rules WHERE is_active")
         active_rules = cursor.fetchall()

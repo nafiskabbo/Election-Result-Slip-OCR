@@ -165,12 +165,21 @@ def test_extract_page_has_no_known_slip_lookup():
     assert "use_known" not in inspect.signature(extract_page_from_file).parameters
 
 
+def test_family_copy_reference_helpers():
+    from backend.grouping_engine import family_base_reference, next_copy_reference
+
+    assert family_base_reference("001335970900502") == "001335970900502"
+    assert family_base_reference("001335970900502 (2)") == "001335970900502"
+    assert next_copy_reference(["001335970900502"], "001335970900502") == "001335970900502 (2)"
+    assert next_copy_reference(["001335970900502", "001335970900502 (2)"], "001335970900502") == "001335970900502 (3)"
+
+
 def test_upload_uses_shared_pipeline():
     import inspect
     from backend.routes.upload import _process_saved_file
 
     source = inspect.getsource(_process_saved_file)
-    assert "extract_page_from_file" in source
+    assert "persist_enhanced_page" in source
     assert "use_known" not in source
 
 

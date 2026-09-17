@@ -91,6 +91,7 @@ class SlipSummaryResponse(BaseModel):
     rejection_reason: Optional[str] = None
     has_errors: bool = False
     has_warnings: bool = False
+    is_vote_related: bool = True
 
 class SlipDetailResponse(SlipSummaryResponse):
     pages: List[SlipPageResponse] = []

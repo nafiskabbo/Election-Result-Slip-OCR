@@ -47,6 +47,7 @@ create table if not exists slips (
     section_24a_votes integer not null default 0,
     total_expected_pages integer not null default 1,
     total_received_pages integer not null default 1,
+    is_vote_related boolean not null default true,
     created_at timestamptz not null default now(),
     updated_at timestamptz not null default now(),
     approved_at timestamptz,
@@ -74,6 +75,9 @@ comment on table slips is 'One logical result slip, possibly spanning several ph
 comment on column slips.slip_reference is 'Grouping key, typically barcode prefix + voting district + ballot type.';
 comment on column slips.status is 'incomplete | pending_review | approved | rejected | flagged';
 comment on column slips.voting_district is 'IEC voting district (VD) number.';
+
+alter table slips add column if not exists is_vote_related boolean not null default true;
+comment on column slips.is_vote_related is 'False when the upload is not an IEC result slip; vote tables must not be shown.';
 
 create table if not exists slip_pages (
     id text primary key,
