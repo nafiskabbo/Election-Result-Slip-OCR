@@ -19,6 +19,7 @@ storage/enhanced/*
 !storage/enhanced/.gitkeep
 storage/thumbnails/*
 !storage/thumbnails/.gitkeep
+storage/debug/
 sample_slips/crop_*.png
 sample_slips/anc_boxes.png
 sample_slips/box_*.png

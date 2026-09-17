@@ -1,4 +1,5 @@
 import uuid
+import os
 import cv2
 import numpy as np
 import re
@@ -31,6 +32,8 @@ from backend.digit_icr import (
     detect_result_column_bounds,
     detect_table_row_lines,
     read_four_blocks,
+    split_result_cells,
+    suppress_result_dividers,
 )
 
 try:
@@ -347,7 +350,8 @@ def parse_vote_digits(text: str) -> Optional[int]:
         return None
     cleaned = text.upper()
     cleaned = cleaned.replace("Ø", "0").replace("Ó", "0").replace("O", "0").replace("D", "0")
-    cleaned = cleaned.replace("I", "1").replace("L", "1").replace("|", "1")
+    cleaned = cleaned.replace("I", "1").replace("L", "1")
+    # Dashed RESULT-box rules OCR as "|" — they are not ones.
     digits = re.sub(r"\D", "", cleaned)
     if not digits:
         return None
@@ -781,12 +785,41 @@ class OCREngine:
                 return parsed
         return self.parse_barcode_reference("".join(lines), header_vd)
 
+    def _write_result_debug(
+        self,
+        img: np.ndarray,
+        debug_dir: str,
+        aligned_rows: List[Tuple[int, int]],
+        res_col_left: int,
+        res_col_right: int,
+        parties_template: List[Tuple[str, str]],
+    ) -> None:
+        os.makedirs(debug_dir, exist_ok=True)
+        vis = img.copy()
+        cv2.line(vis, (res_col_left, 0), (res_col_left, vis.shape[0]), (0, 0, 255), 2)
+        cv2.line(vis, (res_col_right, 0), (res_col_right, vis.shape[0]), (0, 0, 255), 2)
+        for y1, y2 in aligned_rows:
+            cv2.line(vis, (res_col_left, y1), (res_col_right, y1), (0, 255, 0), 1)
+        cv2.imwrite(os.path.join(debug_dir, "07_result_grid.jpg"), vis)
+        cell_dir = os.path.join(debug_dir, "cells")
+        os.makedirs(cell_dir, exist_ok=True)
+        for (p_name, p_code), (r_y1, r_y2) in zip(parties_template, aligned_rows):
+            pad = max(1, int((r_y2 - r_y1) * 0.04))
+            row = img[r_y1 + pad : max(r_y1 + pad + 1, r_y2 - pad), res_col_left:res_col_right]
+            safe = re.sub(r"[^A-Za-z0-9._+-]+", "_", p_code)
+            cv2.imwrite(os.path.join(cell_dir, f"{safe}_row_raw.jpg"), row)
+            cleaned = suppress_result_dividers(row)
+            cv2.imwrite(os.path.join(cell_dir, f"{safe}_row_cleaned.jpg"), cleaned)
+            for i, cell in enumerate(split_result_cells(row)):
+                cv2.imwrite(os.path.join(cell_dir, f"{safe}_cell{i}.jpg"), cell)
+
     def extract_full_slip_data(
         self,
         img: np.ndarray,
         binary: Optional[np.ndarray] = None,
         digit_backend: str = "heuristic",
         also_cnn_votes: bool = False,
+        debug_dir: Optional[str] = None,
     ) -> Dict[str, Any]:
         img = self.upright_image(img)
         if binary is not None:
@@ -912,6 +945,11 @@ class OCREngine:
                 (int(table_top + i * row_h), int(table_top + (i + 1) * row_h))
                 for i in range(num_rows)
             ]
+
+        if debug_dir:
+            self._write_result_debug(
+                img, debug_dir, aligned_rows, res_col_left, res_col_right, parties_template
+            )
 
         # RESULT column: higher upscale + binary pass help faint handwritten digits.
         vote_boxes, vote_lines = self._ocr_region(

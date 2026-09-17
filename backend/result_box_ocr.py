@@ -15,8 +15,9 @@ import numpy as np
 from rapidocr import ModelType, OCRVersion, RapidOCR
 
 # Strict cell text: digits / slashed-zero lookalikes only (reject Chinese / words).
-_CELL_DIGIT_RE = re.compile(r"^[0-9OoØøIl|SsbB]{1,2}$")
-_ROW_DIGIT_RE = re.compile(r"^[0-9OoØøIl|SsBbD\s.,:/_-]{1,16}$")
+# "|" is a dashed box rule, not a one — do not accept it as a cell digit.
+_CELL_DIGIT_RE = re.compile(r"^[0-9OoØøIlSsbB]{1,2}$")
+_ROW_DIGIT_RE = re.compile(r"^[0-9OoØøIlSsBbD\s.,:/|_-]{1,16}$")
 
 
 def build_box_rapid_ocr(model_size: str = "small") -> RapidOCR:
@@ -102,7 +103,6 @@ def _normalize_digit_token(text: str) -> str:
         .replace("o", "0")
         .replace("I", "1")
         .replace("l", "1")
-        .replace("|", "1")
         .replace("S", "5")
         .replace("s", "5")
         .replace("B", "8")
@@ -163,7 +163,10 @@ def read_result_row_rapid(
         return 0, 0.2
 
     # Lazy import avoids circular dependency with ocr_engine.
+    from backend.digit_icr import split_result_cells, suppress_result_dividers
     from backend.ocr_engine import parse_vote_digits
+
+    row_bgr = suppress_result_dividers(row_bgr)
 
     evidence: dict[int, List[Tuple[float, str]]] = defaultdict(list)
     row_digits: List[Tuple[str, float]] = []
@@ -200,14 +203,11 @@ def read_result_row_rapid(
         consider(text, conf, "row")
 
     # Per-cell recognition (det off) — only keep clean digit tokens.
-    _, w = row_bgr.shape[:2]
+    cells = split_result_cells(row_bgr)
     cell_tokens: List[str] = []
     cell_confs: List[float] = []
     cell_hints: List[Tuple[Optional[int], float]] = []
-    for c in range(4):
-        x1 = int(w * c / 4)
-        x2 = int(w * (c + 1) / 4)
-        cell = row_bgr[:, x1:x2]
+    for cell in cells:
         hint_digit, hint_conf = _cell_icr_hint(cell) if use_icr_hints else (None, 0.0)
         cell_hints.append((hint_digit, hint_conf))
         token = ""
@@ -240,16 +240,17 @@ def read_result_row_rapid(
             ):
                 token = best_digit
                 score = max(best_scores)
+        # Blank ICR cells: RapidOCR "1" is almost always a leftover dash.
+        if (
+            use_icr_hints
+            and token == "1"
+            and hint_digit is None
+            and hint_conf >= 0.80
+        ):
+            token = ""
+            score = 0.0
         cell_tokens.append(token)
         cell_confs.append(score)
-
-    filled_idxs = [i for i, token in enumerate(cell_tokens) if token]
-    if filled_idxs and use_icr_hints:
-        first = filled_idxs[0]
-        hint_digit, hint_conf = cell_hints[first]
-        if len(filled_idxs) >= 2 and hint_digit is None and hint_conf >= 0.85:
-            cell_tokens[first] = ""
-            cell_confs[first] = 0.0
 
     joined = "".join(cell_tokens)
     if joined:

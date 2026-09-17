@@ -1,6 +1,7 @@
 import os
 from pathlib import Path
 
+import cv2
 import pytest
 from backend.image_enhancer import ImageEnhancer
 
@@ -51,3 +52,43 @@ def test_enhancement_output_saving(enhancer, tmp_path):
     assert os.path.getsize(out_enhanced) > 0
     assert os.path.exists(out_thumb)
     assert os.path.getsize(out_thumb) > 0
+
+
+def test_resultslip_stays_upright(enhancer):
+    path = SAMPLE_DIR / "ResultSlip.jpg"
+    if not path.exists():
+        pytest.skip("ResultSlip.jpg not in sample_slips/")
+    img = enhancer.load_file_as_cv2(str(path))
+    upright = enhancer.upright_orientation(img)
+    assert upright.shape == img.shape
+    assert enhancer.header_bar_score(upright) >= enhancer.header_bar_score(
+        cv2.rotate(upright, cv2.ROTATE_180)
+    )
+    # An upside-down capture should be flipped back.
+    flipped = cv2.rotate(img, cv2.ROTATE_180)
+    corrected = enhancer.upright_orientation(flipped)
+    assert enhancer.header_bar_score(corrected) >= 0.12
+
+
+def test_landscape_national_rotates_header_to_top(enhancer):
+    path = SAMPLE_DIR / "p_1.jpg"
+    if not path.exists():
+        pytest.skip("p_1.jpg not in sample_slips/")
+    img = enhancer.load_file_as_cv2(str(path))
+    upright, degrees = enhancer._upright_with_degrees(img)
+    assert upright.shape[0] > upright.shape[1]
+    assert degrees in {90, 270}
+    assert enhancer._header_delta(upright) > 0.5
+    assert enhancer.header_bar_score(upright) > 0.5
+
+
+def test_washed_header_is_not_beaten_by_background(enhancer):
+    import numpy as np
+
+    img = np.full((400, 300, 3), 240, dtype=np.uint8)
+    # Faded provincial-pink bar at the top (hue ~2, sat ~60).
+    img[20:50, 20:280] = (110, 113, 151)
+    # Orange chair blob at the bottom that used to win a 180 flip.
+    img[330:390, 20:80] = (40, 90, 200)
+    upright = enhancer.upright_orientation(img)
+    assert np.array_equal(upright, img)

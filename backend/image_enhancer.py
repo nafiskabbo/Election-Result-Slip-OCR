@@ -2,7 +2,7 @@ import cv2
 import numpy as np
 import os
 import time
-from PIL import Image
+from PIL import Image, ImageOps
 from typing import Tuple, Optional, List
 
 try:
@@ -22,7 +22,8 @@ class ImageEnhancementResult:
         raw_width: int,
         raw_height: int,
         enhanced_width: int,
-        enhanced_height: int
+        enhanced_height: int,
+        rotation_degrees: int = 0,
     ):
         self.enhanced_image = enhanced_image
         self.binary_image = binary_image
@@ -33,6 +34,7 @@ class ImageEnhancementResult:
         self.raw_height = raw_height
         self.enhanced_width = enhanced_width
         self.enhanced_height = enhanced_height
+        self.rotation_degrees = int(rotation_degrees)
 
 class ImageEnhancer:
     def __init__(self, target_width: int = 1654, target_height: int = 2339):
@@ -54,9 +56,18 @@ class ImageEnhancer:
             img = cv2.cvtColor(np.array(pil_image), cv2.COLOR_RGB2BGR)
             return img
         else:
+            # PIL applies EXIF orientation; cv2.imread does not, so phone
+            # photos otherwise arrive on their side or upside down.
+            try:
+                with Image.open(file_path) as pil_img:
+                    pil_img = ImageOps.exif_transpose(pil_img) or pil_img
+                    img = cv2.cvtColor(np.array(pil_img.convert("RGB")), cv2.COLOR_RGB2BGR)
+                    if img is not None and img.size:
+                        return img
+            except Exception:
+                pass
             img = cv2.imread(file_path)
             if img is None:
-                # Try PIL fallback for rare JPEG formats
                 pil_img = Image.open(file_path).convert("RGB")
                 img = cv2.cvtColor(np.array(pil_img), cv2.COLOR_RGB2BGR)
             return img
@@ -238,7 +249,11 @@ class ImageEnhancer:
         h, w = img.shape[:2]
         strip = img[: max(8, int(h * 0.12)), :]
         hsv = cv2.cvtColor(strip, cv2.COLOR_BGR2HSV)
+        # Phone photos wash the Provincial pink/red bar; keep orange/blue strict
+        # so warm table paper is not mistaken for a header.
         ranges = [
+            (np.array([0, 50, 80]), np.array([8, 255, 255])),
+            (np.array([170, 50, 80]), np.array([180, 255, 255])),
             (np.array([145, 70, 80]), np.array([175, 255, 255])),
             (np.array([8, 130, 90]), np.array([22, 255, 255])),
             (np.array([95, 80, 70]), np.array([130, 255, 255])),
@@ -250,28 +265,55 @@ class ImageEnhancer:
                 continue
             frac = (mask > 0).mean(axis=1)
             if len(frac):
-                best = max(best, float(np.max(frac)))
+                smooth = np.convolve(frac, np.ones(3) / 3.0, mode="same")
+                best = max(best, float(np.max(smooth)))
         return best
+
+    def _rotation_to_portrait(self, img: np.ndarray) -> Tuple[np.ndarray, int]:
+        """Quarter-turns only. Landscape phone pixels become portrait."""
+        h, w = img.shape[:2]
+        if w <= h:
+            return img, 0
+        cw = cv2.rotate(img, cv2.ROTATE_90_CLOCKWISE)
+        ccw = cv2.rotate(img, cv2.ROTATE_90_COUNTERCLOCKWISE)
+        if self._header_delta(cw) >= self._header_delta(ccw):
+            return cw, 90
+        return ccw, 270
 
     def upright_orientation(self, img: np.ndarray) -> np.ndarray:
         """Rotate phone photos so the coloured header bar sits at the top."""
-        h, w = img.shape[:2]
-        if w > h:
-            candidates = [
-                cv2.rotate(img, cv2.ROTATE_90_CLOCKWISE),
-                cv2.rotate(img, cv2.ROTATE_90_COUNTERCLOCKWISE),
-            ]
-        else:
-            # Portrait phone photos can still arrive upside down.
-            candidates = [img, cv2.rotate(img, cv2.ROTATE_180)]
-        scored = [(self.header_bar_score(cand), cand) for cand in candidates]
-        scored.sort(key=lambda item: item[0], reverse=True)
-        return scored[0][1]
+        oriented, _ = self._upright_with_degrees(img)
+        return oriented
 
-    def process_image(self, img: np.ndarray) -> ImageEnhancementResult:
+    def _header_delta(self, img: np.ndarray) -> float:
+        """Positive when the IEC colour bar is at the top rather than the bottom."""
+        top = self.header_bar_score(img)
+        bottom = self.header_bar_score(cv2.rotate(img, cv2.ROTATE_180))
+        return top - bottom
+
+    def _upright_with_degrees(self, img: np.ndarray) -> Tuple[np.ndarray, int]:
+        portrait, deg = self._rotation_to_portrait(img)
+        delta = self._header_delta(portrait)
+        bottom = self.header_bar_score(cv2.rotate(portrait, cv2.ROTATE_180))
+        # Only commit to a 180 flip when the header is clearly at the bottom.
+        if delta <= -0.08 and bottom >= 0.12:
+            return cv2.rotate(portrait, cv2.ROTATE_180), (deg + 180) % 360
+        return portrait, deg
+
+    def process_image(
+        self,
+        img: np.ndarray,
+        debug_dir: Optional[str] = None,
+    ) -> ImageEnhancementResult:
         t0 = time.time()
-        img = self.upright_orientation(img)
+        if debug_dir:
+            os.makedirs(debug_dir, exist_ok=True)
+            cv2.imwrite(os.path.join(debug_dir, "01_loaded.jpg"), img)
+
+        img, rotation_degrees = self._upright_with_degrees(img)
         raw_h, raw_w = img.shape[:2]
+        if debug_dir:
+            cv2.imwrite(os.path.join(debug_dir, "02_upright.jpg"), img)
 
         # Step 1: Detect Paper Boundary & Perspective Transform
         quad = self.detect_paper_quad(img)
@@ -281,6 +323,8 @@ class ImageEnhancer:
             is_perspective_corrected = True
         else:
             processed = img.copy()
+        if debug_dir:
+            cv2.imwrite(os.path.join(debug_dir, "03_perspective.jpg"), processed)
 
         processed = self.limit_size(processed, max_side=1800)
 
@@ -289,9 +333,14 @@ class ImageEnhancer:
         skew_angle = self.detect_skew_angle(gray_temp)
         if abs(skew_angle) >= 0.2:
             processed = self.deskew_image(processed, skew_angle)
+        if debug_dir:
+            cv2.imwrite(os.path.join(debug_dir, "04_deskewed.jpg"), processed)
 
         # Step 3: Illumination correction, local contrast enhancement, and denoising
         enhanced, binary = self.enhance_contrast_and_denoise(processed)
+        if debug_dir:
+            cv2.imwrite(os.path.join(debug_dir, "05_enhanced.jpg"), enhanced)
+            cv2.imwrite(os.path.join(debug_dir, "06_binary.jpg"), binary)
 
         t1 = time.time()
         enh_h, enh_w = enhanced.shape[:2]
@@ -305,7 +354,8 @@ class ImageEnhancer:
             raw_width=raw_w,
             raw_height=raw_h,
             enhanced_width=enh_w,
-            enhanced_height=enh_h
+            enhanced_height=enh_h,
+            rotation_degrees=rotation_degrees,
         )
 
     def save_results(

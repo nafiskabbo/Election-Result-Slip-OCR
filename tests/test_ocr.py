@@ -49,6 +49,9 @@ def test_parse_vote_digits_four_blocks():
     assert parse_vote_digits("Ø 5") == 5
     assert parse_vote_digits("7 7") == 77
     assert parse_vote_digits("12345") == 2345  # keep last 4 boxes only
+    assert parse_vote_digits("5|2") == 52  # dashed box rules, not ones
+    assert parse_vote_digits("|5|2|") == 52
+    assert parse_vote_digits("1|8|1|6") == 1816
 
 
 def test_digits_to_votes_aligned():
@@ -73,13 +76,38 @@ def test_digits_to_votes_aligned():
 
 def test_centered_thin_one_is_not_removed_as_divider():
     import numpy as np
-    from backend.digit_icr import _cell_mask, classify_digit_mask
+    from backend.digit_icr import _cell_mask, classify_digit_mask, suppress_result_dividers
 
     cell = np.full((80, 50, 3), 255, dtype=np.uint8)
     cv2.line(cell, (25, 18), (25, 64), (0, 0, 0), 4)
     digit, confidence = classify_digit_mask(_cell_mask(cell))
     assert digit == 1
     assert confidence >= 0.8
+
+    # A real 1 in the middle of a box must survive divider suppression.
+    row = np.full((40, 200, 3), 255, dtype=np.uint8)
+    cv2.line(row, (25, 8), (25, 32), (0, 0, 0), 3)
+    cleaned = suppress_result_dividers(row)
+    ink = cv2.countNonZero(cv2.cvtColor(cleaned, cv2.COLOR_BGR2GRAY) < 128)
+    assert ink > 20
+
+
+def test_edge_dash_is_not_read_as_one():
+    import numpy as np
+    from backend.digit_icr import _cell_mask, classify_digit_mask, suppress_result_dividers
+
+    cell = np.full((80, 50, 3), 255, dtype=np.uint8)
+    cv2.line(cell, (48, 4), (48, 76), (0, 0, 0), 2)
+    digit, _ = classify_digit_mask(_cell_mask(cell))
+    assert digit is None
+
+    row = np.full((46, 228, 3), 255, dtype=np.uint8)
+    for x in (0, 57, 114, 171, 227):
+        cv2.line(row, (x, 2), (x, 44), (0, 0, 0), 2)
+    cleaned = suppress_result_dividers(row)
+    gray = cv2.cvtColor(cleaned, cv2.COLOR_BGR2GRAY)
+    for x in (57, 114, 171):
+        assert int(gray[:, max(0, x - 1) : x + 2].mean()) > 240
 
 
 def test_partial_row_grid_is_extrapolated_not_compressed():

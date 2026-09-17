@@ -95,6 +95,61 @@ def detect_result_column_bounds(gray: np.ndarray, y1: int, y2: int) -> Tuple[int
     return int(w * 0.605), int(w * 0.775)
 
 
+def suppress_result_dividers(
+    row_bgr: np.ndarray,
+    box_count: int = RESULT_BOXES,
+) -> np.ndarray:
+    """Whiten the dashed vertical box rules so they are not read as ones.
+
+    IEC RESULT cells are four boxes. OCR treats the dashed dividers as ``1``
+    (or ``|``), turning 52 into 1512 and 22 into 1212.
+    """
+    if row_bgr is None or row_bgr.size == 0:
+        return row_bgr
+    out = row_bgr.copy()
+    h, w = out.shape[:2]
+    gray = cv2.cvtColor(out, cv2.COLOR_BGR2GRAY) if out.ndim == 3 else out
+    _, bw = cv2.threshold(gray, 0, 255, cv2.THRESH_BINARY_INV + cv2.THRESH_OTSU)
+    kernel = cv2.getStructuringElement(cv2.MORPH_RECT, (1, max(6, h // 4)))
+    vert = cv2.morphologyEx(bw, cv2.MORPH_OPEN, kernel)
+    colsum = (vert > 0).sum(axis=0).astype(np.float32)
+    cell_w = max(1, w / float(box_count))
+    window = max(3, int(round(cell_w * 0.18)))
+    pad = max(1, int(round(cell_w * 0.05)))
+    min_peak = h * 0.28
+    # Only the 3 internal dashed rules. Whitening x=0 / x=w also deletes
+    # left-aligned digits (Limpopo 481 → 81).
+    for k in range(1, box_count):
+        expected = int(round(w * k / float(box_count)))
+        lo = max(0, expected - window)
+        hi = min(w, expected + window + 1)
+        if hi <= lo:
+            continue
+        peak = lo + int(np.argmax(colsum[lo:hi]))
+        if colsum[peak] < min_peak:
+            continue
+        x1, x2 = max(0, peak - pad), min(w, peak + pad + 1)
+        out[:, x1:x2] = 255
+    return out
+
+
+def split_result_cells(
+    row_bgr: np.ndarray,
+    box_count: int = RESULT_BOXES,
+) -> List[np.ndarray]:
+    """Four RESULT boxes after dashed dividers are removed."""
+    cleaned = suppress_result_dividers(row_bgr, box_count)
+    if cleaned is None or cleaned.size == 0:
+        return []
+    _, w = cleaned.shape[:2]
+    cells: List[np.ndarray] = []
+    for c in range(box_count):
+        x1 = int(w * c / box_count)
+        x2 = int(w * (c + 1) / box_count)
+        cells.append(cleaned[:, x1:x2])
+    return cells
+
+
 def _cell_mask(cell: np.ndarray) -> np.ndarray:
     g = cv2.cvtColor(cell, cv2.COLOR_BGR2GRAY) if cell.ndim == 3 else cell
     hh, ww = g.shape
@@ -354,14 +409,13 @@ def read_four_blocks(
         return 0, 0.90, [None, None, None, None]
     if row_bgr is None or row_bgr.size == 0:
         return 0, 0.2, [None, None, None, None]
-    h, w = row_bgr.shape[:2]
     digits: List[Optional[int]] = []
     confs: List[float] = []
     use_cnn = backend == "cnn"
-    for c in range(RESULT_BOXES):
-        x1 = int(w * c / RESULT_BOXES)
-        x2 = int(w * (c + 1) / RESULT_BOXES)
-        cell = row_bgr[:, x1:x2]
+    cells = split_result_cells(row_bgr)
+    if len(cells) != RESULT_BOXES:
+        return 0, 0.2, [None, None, None, None]
+    for cell in cells:
         if use_cnn:
             from backend.digit_cnn import classify_cell_cnn
 

@@ -20,6 +20,7 @@ def extract_page_from_file(
     digit_backend: Optional[str] = None,
     also_cnn_votes: bool = False,
     rapidocr_model: Optional[str] = None,
+    debug_dir: Optional[str] = None,
 ) -> Tuple[ImageEnhancementResult, dict]:
     """Load, enhance, and OCR one page the same way POST /api/upload does.
 
@@ -36,12 +37,13 @@ def extract_page_from_file(
     cv_img = enhancer.load_file_as_cv2(file_path, page_index=page_index)
     if cv_img is None:
         raise ValueError(f"could not read image: {file_path}")
-    enh_res = enhancer.process_image(cv_img)
+    enh_res = enhancer.process_image(cv_img, debug_dir=debug_dir)
     extracted = ocr_engine.extract_full_slip_data(
         enh_res.enhanced_image,
         binary=enh_res.binary_image,
         digit_backend=digit_backend,
         also_cnn_votes=also_cnn_votes,
+        debug_dir=debug_dir,
     )
     return enh_res, extracted
 
