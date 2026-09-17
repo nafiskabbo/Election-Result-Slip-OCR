@@ -45,7 +45,7 @@
     "voting_district": "76240234",
     "station_name": "BAKGAGA",
     "registered_voters": 1149,
-    "votes": {"AZAPO": 2, "ANC": 462, "DA": 5, "EFF": 97}
+    "votes": {"AZAPO": 2, "ANC": 463, "DA": 5, "EFF": 97}
   },
   "p_5.jpg": {
     "template": "iec_slip",
@@ -91,7 +91,7 @@
     "voting_district": "76240234",
     "station_name": "BAKGAGA",
     "registered_voters": 1149,
-    "votes": {"UDM": 1, "VF PLUS": 1, "ACTIONSA": 14, "ACDP": 2, "APC": 1}
+    "votes": {"UDM": 1, "VF PLUS": 1, "ACTIONSA": 4, "ACDP": 2, "APC": 1}
   },
   "p_9.jpg": {
     "template": "iec_slip",
@@ -125,7 +125,7 @@
       "ANC": 920,
       "BOSA": 2,
       "COPE": 4,
-      "DA": 611,
+      "DA": 61,
       "EFF": 203,
       "PAC": 8,
       "PA": 12,
@@ -163,17 +163,34 @@
     "ballot_type": "National",
     "votes": {
       "AM4C": 3,
-      "AZAPO": 5,
-      "ANC": 325,
+      "ANC": 335,
       "BOSA": 46,
+      "CITIZANS": 1,
       "DA": 1068,
-      "EFF": 490,
-      "GOOD": 7,
+      "EFF": 1090,
+      "GOOD": 27,
+      "#HOPE4SA": 2,
+      "IFP": 10,
+      "CCC": 10,
+      "NCCM": 1,
+      "OHM": 2,
+      "PAC": 12,
+      "PA": 29,
+      "PMC": 1,
+      "RP": 2,
+      "RISE": 95,
+      "SARA": 1,
       "M.K.": 153,
+      "UAT": 2,
+      "UDM": 14,
+      "UIM": 1,
+      "VF PLUS": 14,
       "ACTIONSA": 60,
-      "ATM": 26
+      "ACDP": 13,
+      "ATM": 26,
+      "ALJAMA": 8
     },
-    "totals": {"valid": 2016, "spoilt": 9, "cast": 2025}
+    "totals": {"valid": 3016, "spoilt": 9, "cast": 3025}
   },
   "Result_Slip_2024_Previous_Election_Sample.jpg": {
     "template": "iec_slip",

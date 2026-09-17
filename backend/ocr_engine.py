@@ -927,6 +927,8 @@ class OCREngine:
                 ocr_votes, ocr_conf = self._votes_from_ocr_row(
                     vote_boxes, r_y1, r_y2, res_col_left, res_col_right
                 )
+                box_votes: Optional[int] = None
+                box_conf = 0.0
                 need_box = (
                     conf < LOW_VOTE_CONFIDENCE
                     or votes >= 100
@@ -947,13 +949,35 @@ class OCREngine:
                             ocr_votes, ocr_conf = box_votes, box_conf
 
                 use_rapid = False
-                if votes == 0 and conf >= 0.70 and ocr_votes and ocr_conf >= 0.55:
+                box_empty_veto = box_votes == 0 and box_conf >= 0.60
+                box_agrees_with_icr = box_votes == votes and votes > 0 and box_conf >= 0.65
+                strong_icr_vote = votes > 0 and conf >= 0.78
+                if (
+                    votes == 0
+                    and conf >= 0.70
+                    and ocr_votes
+                    and ocr_conf >= 0.55
+                    and not box_empty_veto
+                ):
                     use_rapid = True
                 elif conf < LOW_VOTE_CONFIDENCE and ocr_votes and ocr_conf >= 0.55:
                     use_rapid = True
-                elif ocr_votes and ocr_conf >= 0.85 and votes != ocr_votes:
+                elif box_votes and box_conf >= 0.85 and box_votes != votes:
                     use_rapid = True
-                elif 0 < votes < 10 and ocr_votes >= 10 and ocr_conf >= 0.55:
+                elif (
+                    ocr_votes
+                    and ocr_conf >= 0.85
+                    and votes != ocr_votes
+                    and not strong_icr_vote
+                    and not box_agrees_with_icr
+                ):
+                    use_rapid = True
+                elif (
+                    0 < votes < 10
+                    and ocr_votes >= 10
+                    and ocr_conf >= 0.55
+                    and not box_agrees_with_icr
+                ):
                     use_rapid = True
                 elif (
                     votes >= 100

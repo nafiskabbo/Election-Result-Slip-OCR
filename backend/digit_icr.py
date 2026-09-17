@@ -375,10 +375,19 @@ def align_rows_to_template(
     if len(row_lines) >= num_rows + 1:
         # Pick the densest contiguous band with num_rows intervals.
         best = None
-        for i in range(0, len(row_lines) - num_rows):
+        for i in range(0, len(row_lines) - num_rows + 1):
             band = row_lines[i : i + num_rows + 1]
+            if len(band) != num_rows + 1:
+                continue
             gaps = np.diff(band)
             if gaps.min() <= 0:
+                continue
+            median_gap = float(np.median(gaps))
+            if median_gap <= 0:
+                continue
+            if gaps.min() < max(6.0, median_gap * 0.55):
+                continue
+            if gaps.max() > median_gap * 1.65:
                 continue
             score = -float(np.std(gaps)) - abs(float(np.median(gaps)) - float(np.mean(gaps)))
             if best is None or score > best[0]:
