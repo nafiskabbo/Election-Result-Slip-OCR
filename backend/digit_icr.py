@@ -432,14 +432,26 @@ def suppress_result_dividers(
     wipe = np.zeros((h, w), dtype=np.uint8)
 
     num, labels, stats, centroids = cv2.connectedComponentsWithStats(closed)
+    thin_lim = max(5, int(round(cell_w * 0.09)))
+    max_digit_w = int(round(cell_w * 0.90))
+    max_digit_area = int(h * cell_w * 0.50)
+    min_digit_h = max(8, int(h * 0.28))
+    digit_protect = np.zeros((h, w), dtype=np.uint8)
     for i in range(1, num):
         x, y, cw, ch, area = stats[i]
         cx = float(centroids[i][0])
         cy = float(centroids[i][1])
         near = min(abs(cx - exp) for exp in internal) <= window if internal else False
         glued_edge = x <= edge_pad or (x + cw) >= w - edge_pad
-        # Printed dashes are 1–3px; a handwritten 1 is thicker. Never wipe the 1.
-        thin = cw <= max(3, int(round(cell_w * 0.06)))
+        # Printed dashes are ~2–5px after close; a 4/6 on the rule is much wider.
+        thin = cw <= thin_lim
+        if (
+            not thin
+            and ch >= min_digit_h
+            and cw <= max_digit_w
+            and area <= max_digit_area
+        ):
+            digit_protect[labels == i] = 255
         tall = ch >= max(4, int(h * 0.16))
         short_dash = thin and ch <= max(8, int(h * 0.50)) and area <= max(50, h * 3)
         horiz = ch <= max(4, int(h * 0.20)) and cw >= max(10, int(cell_w * 0.25))
@@ -482,22 +494,22 @@ def suppress_result_dividers(
             hi = min(w, int(round(xmid)) + pad + 1)
             column = wipe[:, lo:hi]
             ink = closed[:, lo:hi]
-            column[ink > 0] = 255
+            protect = digit_protect[:, lo:hi]
+            column[(ink > 0) & (protect == 0)] = 255
 
-    # Peak columns: only the thin dash, not a wide digit sitting on the rule.
+    # Peak columns: wipe dash ink in the strip, but keep a 4/6 that crosses it.
     peak_pad = max(1, int(round(cell_w * 0.07)))
     for peak in result_divider_xs(out, box_count):
         x1, x2 = max(0, peak - peak_pad), min(w, peak + peak_pad + 1)
         strip = closed[:, x1:x2]
-        s_num, s_labels, s_stats, _ = cv2.connectedComponentsWithStats(strip)
-        for i in range(1, s_num):
-            _sx, _sy, sw, sh, _area = s_stats[i]
-            if sw <= max(3, int(round(cell_w * 0.06))) and sh >= max(3, int(h * 0.12)):
-                wipe[:, x1:x2][s_labels == i] = 255
+        protect = digit_protect[:, x1:x2]
+        wipe[:, x1:x2][(strip > 0) & (protect == 0)] = 255
 
     if int(np.count_nonzero(wipe)) == 0:
         return out
-    wipe = cv2.dilate(wipe, cv2.getStructuringElement(cv2.MORPH_RECT, (3, 3)))
+    # Vertical close fills dashed gaps; horizontal dilate ate divider-glued digits.
+    wipe = cv2.dilate(wipe, cv2.getStructuringElement(cv2.MORPH_RECT, (1, 3)))
+    wipe[digit_protect > 0] = 0
     out[wipe > 0] = 255
     return out
 
@@ -515,6 +527,11 @@ def split_result_cells(
         cleaned[:, int(w * c / box_count) : int(w * (c + 1) / box_count)]
         for c in range(box_count)
     ]
+
+
+def hybrid_result_cells(row_bgr: np.ndarray) -> List[np.ndarray]:
+    """Scale + dash-wipe + four boxes — the same crops ICR and Rapid see."""
+    return split_result_cells(scale_result_row(row_bgr))
 
 
 def _cell_mask(cell: np.ndarray) -> np.ndarray:
@@ -621,17 +638,19 @@ def _is_noise(s: dict) -> bool:
         if s["aspect"] < 0.55 or s["width_frac"] > 0.7:
             return True
     # Vertical edge remnant (signature bleed / dashed divider).
+    # Keep this outside the 1's allowed cx band (0.14–0.78) so a divider-glued
+    # 1 is not discarded. Wide glyphs (EFF 4) fail the width_frac cap.
     right = z[2] + z[5] + z[8]
     left = z[0] + z[3] + z[6]
-    if s["cx"] >= 0.78 and right > 0.55 and left < 0.25:
+    if s["cx"] >= 0.82 and right > 0.55 and left < 0.25 and s["width_frac"] < 0.32 and s["aspect"] < 4.0:
         return True
-    if s["cx"] <= 0.22 and left > 0.55 and right < 0.25:
+    if s["cx"] <= 0.14 and left > 0.55 and right < 0.25 and s["width_frac"] < 0.32 and s["aspect"] < 4.0:
         return True
     # Too filled to be a single handwritten digit in a box.
     if s["ratio"] > 0.38:
         return True
-    # Thin edge stroke mistaken for 1.
-    if s["aspect"] >= 4.0 and (s["cx"] < 0.18 or s["cx"] > 0.82):
+    # Thin edge stroke mistaken for 1. Stay outside the 1 classifier's cx band.
+    if s["aspect"] >= 4.0 and (s["cx"] < 0.14 or s["cx"] > 0.82):
         return True
     return False
 
@@ -677,22 +696,44 @@ def classify_digit_mask(mask: np.ndarray) -> Tuple[Optional[int], float]:
         if ring:
             return 0, 0.78
 
-    # 5 before 4: empty top band, ink mid/low with bottom-right weight.
-    # Reject flat border fragments (already mostly handled in _is_noise).
+    # 5 before 4: empty top band, ink mid/low with a left spine.
+    # A 2 is right-heavy only (ASA); do not call that a 5.
     if (
         holes == 0
         and top_sum < 0.12
         and mid_sum + bot_sum > 0.30
         and 0.55 <= aspect < 2.1
         and s["width_frac"] < 0.85
+        and (z[0] + z[3] + z[6]) > 0.08
     ):
         if z[8] > 0.10 or (z[5] > 0.05 and bot_sum > 0.12):
             return 5, 0.76
 
+    # 3 before 7: a compact S-3 has a mid-right bump and is not bottom-heavy
+    # (UDM). A 2 is bottom-right heavy and must not match this. Skip ink glued
+    # to a leftover divider (AZAPO phone scans).
+    if (
+        holes == 0
+        and aspect < 2.0
+        and 0.28 <= cx <= 0.72
+        and z[6] < 0.12
+        and z[5] > 0.18
+        and z[5] > z[3] + 0.08
+        and s["top_bot"] > 0.90
+        and z[8] < 0.20
+    ):
+        return 3, 0.62
+
     # 7 — hook / crossbar; bottom-left usually open. Tall thin 7s (PA) sit
     # between a compact 7 (aspect < 2.2) and a 1 (aspect >= 4).
     if holes == 0 and z[6] < 0.10:
-        if aspect < 2.2 and s["top_bot"] > 1.15 and (z[1] + z[2]) > 0.05:
+        if (
+            aspect < 2.2
+            and s["top_bot"] > 1.15
+            and (z[1] + z[2]) > 0.05
+            and z[5] < 0.18
+            and z[8] < 0.12
+        ):
             return 7, 0.74
         if (
             2.2 <= aspect < 3.8
@@ -706,8 +747,8 @@ def classify_digit_mask(mask: np.ndarray) -> Tuple[Optional[int], float]:
             return 7, 0.66
 
     # 4 — open top-right, strong mid cross, left stem.
-    if holes == 0 and 1.1 <= aspect <= 2.3 and z[2] < 0.08 and z[4] > 0.15:
-        if z[3] + z[6] > 0.28 and top_sum > 0.02:
+    if holes == 0 and 1.1 <= aspect <= 2.8 and z[2] < 0.08 and z[4] > 0.12:
+        if z[3] + z[6] > 0.22 and top_sum > 0.02:
             return 4, 0.74
 
     # 2 — more ink bottom-right / mid, without the left stem of a 4.
@@ -716,16 +757,31 @@ def classify_digit_mask(mask: np.ndarray) -> Tuple[Optional[int], float]:
             return 2, 0.55
 
     # 3 — right-heavy stack.
-    if holes == 0 and aspect < 2.0 and z[2] + z[5] + z[8] > z[0] + z[3] + z[6] + 0.15:
+    if (
+        holes == 0
+        and aspect < 2.0
+        and 0.28 <= cx <= 0.72
+        and z[2] + z[5] + z[8] > z[0] + z[3] + z[6] + 0.15
+    ):
         return 3, 0.50
 
     # 6 / 9 only when clearly bottom- or top-heavy (avoid eating zeros).
-    if holes == 1 and aspect < 2.0 and 0.3 <= cx <= 0.7:
-        if z[7] > z[1] + 0.12 and bot_sum > top_sum + 0.15:
+    if holes == 1:
+        # Divider-glued 6s sit left in the last box (M.K.) with an open top.
+        if (
+            aspect < 2.6
+            and 0.18 <= cx <= 0.75
+            and top_sum < 0.05
+            and z[7] > z[1] + 0.12
+            and bot_sum > top_sum + 0.15
+        ):
             return 6, 0.55
-        if z[1] > z[7] + 0.12 and top_sum > bot_sum + 0.15:
-            return 9, 0.55
-        return 0, 0.60
+        if aspect < 2.0 and 0.3 <= cx <= 0.7:
+            if z[7] > z[1] + 0.12 and bot_sum > top_sum + 0.15:
+                return 6, 0.55
+            if z[1] > z[7] + 0.12 and top_sum > bot_sum + 0.15:
+                return 9, 0.55
+            return 0, 0.60
 
     # Prefer empty over inventing a zero for leftover blobs.
     if 0.04 <= s["ratio"] <= 0.20 and 0.3 <= cx <= 0.7 and aspect < 2.5 and holes >= 1:

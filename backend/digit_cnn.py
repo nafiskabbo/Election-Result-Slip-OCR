@@ -1,48 +1,84 @@
 """Handwritten digit CNN (MNIST + EMNIST Digits + blank) for RESULT boxes.
 
-Model: deepshah23/digit-blank-classifier-cnn (Plom exam-box digit ONNX).
-Classes 0–9 = digits, class 10 = blank/empty.
+Experimental alternative to heuristic ICR. Production hybrid does not use this
+unless digit_backend is ``cnn`` or ``cnn-hybrid``.
 
-This is an experimental alternative to the heuristic ICR in digit_icr.py.
-It is not trained on IEC dashed boxes or slashed zeros (Ø).
+v1 = MNIST/EMNIST + heavy dashed-box augment (kept on disk).
+v2 = hybrid-cleaned IEC cells + residual-dash / resolution augment.
 """
 
 from __future__ import annotations
 
 from pathlib import Path
-from typing import Optional, Tuple
+from typing import Dict, Optional, Tuple
 
 import cv2
 import numpy as np
 
 MODEL_NAME = "mnist_emnist_blank_cnn_v1.onnx"
 AUG_MODEL_NAME = "digit_cnn_mnist_emnist_aug_v1.onnx"
+HYBRID_MODEL_NAME = "digit_cnn_iec_hybrid_v2.onnx"
 MODEL_PATH = Path(__file__).resolve().parent / "models" / MODEL_NAME
 AUG_MODEL_PATH = Path(__file__).resolve().parent / "models" / AUG_MODEL_NAME
+HYBRID_MODEL_PATH = Path(__file__).resolve().parent / "models" / HYBRID_MODEL_NAME
 MODEL_URL = (
     "https://huggingface.co/deepshah23/digit-blank-classifier-cnn/"
     f"resolve/main/{MODEL_NAME}"
 )
 BLANK_CLASS = 10
 
-_session = None
-_load_error: Optional[str] = None
+_sessions: Dict[str, object] = {}
+_load_errors: Dict[str, str] = {}
+_requested_model = "v1"
 _active_model: Optional[str] = None
+_load_error: Optional[str] = None
 
 
-def model_available() -> bool:
-    for path in (AUG_MODEL_PATH, MODEL_PATH):
-        if path.exists() and path.stat().st_size > 1000:
-            return True
-    return False
+def _normalize_model_key(name: Optional[str]) -> str:
+    raw = (name or _requested_model or "v1").strip().lower()
+    if raw in {"v2", "hybrid", "new", HYBRID_MODEL_NAME.lower()}:
+        return "v2"
+    if raw in {"stock", "base", MODEL_NAME.lower()}:
+        return "stock"
+    return "v1"
 
 
-def ensure_model() -> Path:
-    """Return local ONNX path; prefer hard-augment fine-tune if present."""
+def set_active_model(name: str) -> None:
+    """Select v1 (old) or v2 (hybrid-trained) for subsequent classify calls."""
+    global _requested_model, _load_error, _active_model
+    _requested_model = _normalize_model_key(name)
+    _load_error = _load_errors.get(_requested_model)
+    path = model_path_for(_requested_model)
+    _active_model = path.name if path is not None else None
+
+
+def hybrid_model_available() -> bool:
+    return HYBRID_MODEL_PATH.exists() and HYBRID_MODEL_PATH.stat().st_size > 1000
+
+
+def model_path_for(key: str) -> Optional[Path]:
+    key = _normalize_model_key(key)
+    if key == "v2" and hybrid_model_available():
+        return HYBRID_MODEL_PATH
+    if key == "stock" and MODEL_PATH.exists() and MODEL_PATH.stat().st_size > 1000:
+        return MODEL_PATH
     if AUG_MODEL_PATH.exists() and AUG_MODEL_PATH.stat().st_size > 1000:
         return AUG_MODEL_PATH
     if MODEL_PATH.exists() and MODEL_PATH.stat().st_size > 1000:
         return MODEL_PATH
+    return None
+
+
+def model_available() -> bool:
+    return model_path_for("v1") is not None or hybrid_model_available()
+
+
+def ensure_model() -> Path:
+    """Return local ONNX path for the requested model; never overwrite v1."""
+    key = _normalize_model_key(_requested_model)
+    path = model_path_for(key)
+    if path is not None:
+        return path
     MODEL_PATH.parent.mkdir(parents=True, exist_ok=True)
     from urllib.request import urlretrieve
 
@@ -52,42 +88,64 @@ def ensure_model() -> Path:
     return MODEL_PATH
 
 
-def _get_session():
-    global _session, _load_error, _active_model
-    if _session is not None:
-        return _session
-    if _load_error:
+def _get_session(key: Optional[str] = None):
+    global _load_error, _active_model
+    model_key = _normalize_model_key(key)
+    if model_key in _sessions:
+        return _sessions[model_key]
+    if model_key in _load_errors:
+        _load_error = _load_errors[model_key]
         return None
     try:
         import onnxruntime as ort
 
-        path = ensure_model()
+        path = model_path_for(model_key)
+        if path is None:
+            if model_key == "v2":
+                _load_errors[model_key] = f"missing {HYBRID_MODEL_NAME}"
+                _load_error = _load_errors[model_key]
+                return None
+            path = ensure_model()
+        sess = ort.InferenceSession(str(path), providers=["CPUExecutionProvider"])
+        _sessions[model_key] = sess
         _active_model = path.name
-        _session = ort.InferenceSession(str(path), providers=["CPUExecutionProvider"])
-        return _session
-    except Exception as exc:  # noqa: BLE001 — surface as soft failure for accuracy compare
+        return sess
+    except Exception as exc:  # noqa: BLE001
+        _load_errors[model_key] = str(exc)
         _load_error = str(exc)
         return None
 
 
 def active_model_name() -> Optional[str]:
-    ensure = model_available()
-    if not ensure:
+    if not model_available():
         return None
     if _active_model:
         return _active_model
-    if AUG_MODEL_PATH.exists() and AUG_MODEL_PATH.stat().st_size > 1000:
-        return AUG_MODEL_NAME
-    return MODEL_NAME
+    path = model_path_for(_requested_model)
+    return path.name if path is not None else None
 
 
 def cell_to_mnist_tensor(cell_bgr: np.ndarray) -> Tuple[np.ndarray, float]:
     """Crop border, keep ink blob, center on 28×28 white-on-black MNIST canvas."""
+    return _cell_to_tensor(cell_bgr, crop_frac=0.22, min_ink=45)
+
+
+def cell_to_hybrid_tensor(cell_bgr: np.ndarray) -> Tuple[np.ndarray, float]:
+    """Milder crop for dash-wiped hybrid cells (keep faint centered 1s)."""
+    return _cell_to_tensor(cell_bgr, crop_frac=0.10, min_ink=28)
+
+
+def _cell_to_tensor(
+    cell_bgr: np.ndarray,
+    *,
+    crop_frac: float,
+    min_ink: int,
+) -> Tuple[np.ndarray, float]:
     if cell_bgr is None or cell_bgr.size == 0:
         return np.zeros((28, 28), dtype=np.float32), 0.0
     g = cv2.cvtColor(cell_bgr, cv2.COLOR_BGR2GRAY) if cell_bgr.ndim == 3 else cell_bgr
     h, w = g.shape[:2]
-    m = max(2, int(min(h, w) * 0.22))
+    m = max(2, int(min(h, w) * crop_frac))
     g = g[m : h - m, m : w - m]
     if g.size == 0:
         return np.zeros((28, 28), dtype=np.float32), 0.0
@@ -107,7 +165,6 @@ def cell_to_mnist_tensor(cell_bgr: np.ndarray) -> Tuple[np.ndarray, float]:
             continue
         if bh <= 5 and bw > 16:
             continue
-        # Drop long border-hugging dashes (IEC box rules).
         if bw >= g.shape[1] * 0.72 and bh <= g.shape[0] * 0.22:
             continue
         if bh >= g.shape[0] * 0.72 and bw <= g.shape[1] * 0.22:
@@ -116,7 +173,7 @@ def cell_to_mnist_tensor(cell_bgr: np.ndarray) -> Tuple[np.ndarray, float]:
         ink += int(area)
 
     dens = ink / float(max(1, out.size))
-    if ink < 45:
+    if ink < min_ink:
         return np.zeros((28, 28), dtype=np.float32), dens
 
     ys, xs = np.where(out > 0)
@@ -133,13 +190,20 @@ def cell_to_mnist_tensor(cell_bgr: np.ndarray) -> Tuple[np.ndarray, float]:
     return canvas.astype(np.float32) / 255.0, dens
 
 
-def classify_cell_cnn(cell_bgr: np.ndarray) -> Tuple[Optional[int], float]:
+def classify_cell_cnn(
+    cell_bgr: np.ndarray,
+    *,
+    model: Optional[str] = None,
+) -> Tuple[Optional[int], float]:
     """Return (digit or None for empty/blank, confidence)."""
-    tensor, dens = cell_to_mnist_tensor(cell_bgr)
-    if dens < 0.012:
+    key = _normalize_model_key(model)
+    tensor_fn = cell_to_hybrid_tensor if key == "v2" else cell_to_mnist_tensor
+    tensor, dens = tensor_fn(cell_bgr)
+    min_dens = 0.008 if key == "v2" else 0.012
+    if dens < min_dens:
         return None, 0.92
 
-    sess = _get_session()
+    sess = _get_session(key)
     if sess is None:
         return None, 0.0
 
@@ -152,7 +216,6 @@ def classify_cell_cnn(cell_bgr: np.ndarray) -> Tuple[Optional[int], float]:
     blank_p = float(probs[BLANK_CLASS]) if len(probs) > BLANK_CLASS else 0.0
     if idx == BLANK_CLASS:
         return None, conf
-    # Prefer blank when the digit call is weak or dashed-box noise competes.
     if conf < 0.58 or blank_p >= conf * 0.75:
         return None, max(conf, blank_p)
     return idx, conf

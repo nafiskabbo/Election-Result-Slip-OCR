@@ -845,7 +845,8 @@ def format_vote_path_compare_markdown(
     lines.append(
         "- **Hybrid (production):** topology ICR on the four boxes, then RapidOCR "
         "on the same boxes, then `fuse_result_votes` using both totals **and** "
-        "confidence (Rapid needs ≥ 0.55 to compete; 1-vs-2 digit recovery ≥ 0.64)."
+        "confidence (Rapid needs ≥ 0.55 to compete; 1-vs-2 digit recovery ≥ 0.64; "
+        "same-length 1–2 digit Rapid ≥ 0.85 wins over topology ICR)."
     )
     lines.append(
         "- **Rapid only (compare pass):** a second full OCR of the same files with "
@@ -1122,6 +1123,173 @@ def write_report(result: Dict[str, Any], use_known: bool, path: Path) -> Path:
     return path
 
 
+def format_cnn_model_compare_markdown(
+    runs: Dict[str, Dict[str, Any]],
+    focus_files: Optional[Iterable[str]] = None,
+) -> str:
+    """Production hybrid vs old CNN v1 vs new CNN v2 vs v2+Rapid."""
+    labels = [
+        ("hybrid", "Hybrid (production ICR+Rapid)"),
+        ("cnn_v1", "CNN v1 (old, not in desk)"),
+        ("cnn_v2", "CNN v2 (new, not in desk)"),
+        ("cnn_v2_hybrid", "CNN v2 + Rapid fuse (experiment)"),
+    ]
+    lines: List[str] = []
+    lines.append("# Digit CNN vs production hybrid")
+    lines.append("")
+    lines.append(
+        "Production **does not** use the custom CNN. Hybrid is ICR + Rapid. "
+        "CNN v1 is the previous ONNX. CNN v2 is trained on hybrid-cleaned boxes. "
+        "CNN v2 + Rapid is the same fusion as hybrid with ICR replaced by v2."
+    )
+    lines.append("")
+    lines.append("## Summary")
+    lines.append("")
+    lines.append("| Path | IEC fields | Party votes | Non-zero votes | Blank rows |")
+    lines.append("| --- | --- | --- | --- | --- |")
+    for key, title in labels:
+        result = runs.get(key)
+        if not result:
+            lines.append(f"| {title} | — | — | — | — |")
+            continue
+        iec = _pct(result["iec_hits"], result["iec_total"])
+        votes = _pct(result["heuristic_vote_hits"], result["heuristic_vote_total"] or 0)
+        nz = _pct(result.get("nonzero_vote_hits", 0), result.get("nonzero_vote_total") or 0)
+        blank = _pct(result.get("blank_vote_hits", 0), result.get("blank_vote_total") or 0)
+        lines.append(
+            f"| {title} | {result['iec_hits']}/{result['iec_total']}"
+            f"{f' ({iec}%)' if iec is not None else ''} | "
+            f"{result.get('heuristic_vote_hits', 0)}/{result.get('heuristic_vote_total', 0)}"
+            f"{f' ({votes}%)' if votes is not None else ''} | "
+            f"{result.get('nonzero_vote_hits', 0)}/{result.get('nonzero_vote_total', 0)}"
+            f"{f' ({nz}%)' if nz is not None else ''} | "
+            f"{result.get('blank_vote_hits', 0)}/{result.get('blank_vote_total', 0)}"
+            f"{f' ({blank}%)' if blank is not None else ''} |"
+        )
+    lines.append("")
+
+    maps = {key: {p["file"]: p for p in (runs.get(key) or {}).get("pages") or []} for key, _ in labels}
+    focus = [Path(name).name for name in (focus_files or FOCUS_COMPARE_FILES)]
+    for name in list(maps["hybrid"]):
+        if name not in focus:
+            focus.append(name)
+
+    lines.append("## Focus slips — party votes")
+    lines.append("")
+    for name in focus:
+        pages = {key: maps[key].get(name) for key, _ in labels}
+        if not any(pages.values()):
+            continue
+        lines.append(f"### `{name}`")
+        lines.append("")
+        lines.append(
+            "| Party | Expected | Hybrid | CNN v1 | CNN v2 | v2+Rapid | Hybrid | v1 | v2 | v2+R |"
+        )
+        lines.append("| --- | ---: | ---: | ---: | ---: | ---: | --- | --- | --- | --- |")
+        codes = []
+        for page in pages.values():
+            for row in (page or {}).get("vote_compare") or []:
+                if row["code"] not in codes:
+                    codes.append(row["code"])
+        by_run = {
+            key: {r["code"]: r for r in ((pages[key] or {}).get("vote_compare") or [])}
+            for key, _ in labels
+        }
+        for code in codes:
+            expected = (by_run["hybrid"].get(code) or by_run["cnn_v2"].get(code) or {}).get("expected")
+            h = by_run["hybrid"].get(code) or {}
+            v1 = by_run["cnn_v1"].get(code) or {}
+            v2 = by_run["cnn_v2"].get(code) or {}
+            vh = by_run["cnn_v2_hybrid"].get(code) or {}
+            lines.append(
+                f"| {code} | {expected} | {_show(h.get('heuristic'))} | "
+                f"{_show(v1.get('heuristic'))} | {_show(v2.get('heuristic'))} | "
+                f"{_show(vh.get('heuristic'))} | "
+                f"{'OK' if h.get('heuristic_ok') else 'MISS'} | "
+                f"{'OK' if v1.get('heuristic_ok') else 'MISS'} | "
+                f"{'OK' if v2.get('heuristic_ok') else 'MISS'} | "
+                f"{'OK' if vh.get('heuristic_ok') else 'MISS'} |"
+            )
+        lines.append("")
+    return "\n".join(lines) + "\n"
+
+
+def _run_cnn_model_compare(
+    gold: Dict[str, Dict[str, Any]],
+    file_names: Optional[List[str]],
+    rapidocr_model: str,
+    debug_root: Optional[Path],
+    out: Path,
+) -> int:
+    from backend.digit_cnn import hybrid_model_available, set_active_model
+
+    names = file_names or list(FOCUS_COMPARE_FILES)
+    print("=== Hybrid: production ICR + Rapid (desk path) ===")
+    set_active_model("v1")
+    hybrid = score_folder(
+        SAMPLE_DIR,
+        gold,
+        compare_digit_cnn=False,
+        rapidocr_model=rapidocr_model,
+        digit_backend="heuristic",
+        files=names,
+        debug_root=debug_root,
+    )
+    print_report(hybrid, False)
+
+    print("\n=== CNN v1 only (old weights, not in desk) ===")
+    set_active_model("v1")
+    cnn_v1 = score_folder(
+        SAMPLE_DIR,
+        gold,
+        compare_digit_cnn=False,
+        rapidocr_model=rapidocr_model,
+        digit_backend="cnn",
+        files=names,
+        debug_root=None,
+    )
+    print_report(cnn_v1, False)
+
+    runs: Dict[str, Dict[str, Any]] = {"hybrid": hybrid, "cnn_v1": cnn_v1}
+    if hybrid_model_available():
+        print("\n=== CNN v2 only (new IEC-hybrid weights) ===")
+        set_active_model("v2")
+        cnn_v2 = score_folder(
+            SAMPLE_DIR,
+            gold,
+            compare_digit_cnn=False,
+            rapidocr_model=rapidocr_model,
+            digit_backend="cnn",
+            files=names,
+            debug_root=None,
+        )
+        print_report(cnn_v2, False)
+        print("\n=== CNN v2 + Rapid fuse (experimental, not in desk) ===")
+        set_active_model("v2")
+        cnn_v2_hybrid = score_folder(
+            SAMPLE_DIR,
+            gold,
+            compare_digit_cnn=False,
+            rapidocr_model=rapidocr_model,
+            digit_backend="cnn-hybrid",
+            files=names,
+            debug_root=None,
+        )
+        print_report(cnn_v2_hybrid, False)
+        runs["cnn_v2"] = cnn_v2
+        runs["cnn_v2_hybrid"] = cnn_v2_hybrid
+    else:
+        print("\nCNN v2 ONNX not found — train with ./run.sh digit-train --include-handwriting")
+    set_active_model("v1")
+
+    md = format_cnn_model_compare_markdown(runs, names)
+    compare_out = out.with_name("accuracy_cnn_model_compare.md") if out.name == DEFAULT_REPORT_PATH.name else out
+    compare_out.parent.mkdir(parents=True, exist_ok=True)
+    compare_out.write_text(md, encoding="utf-8")
+    print(f"\nWrote {compare_out}")
+    return 0
+
+
 def main(argv: Optional[List[str]] = None) -> int:
     parser = argparse.ArgumentParser(description="Run OCR accuracy checks on sample_slips/")
     parser.add_argument(
@@ -1141,6 +1309,14 @@ def main(argv: Optional[List[str]] = None) -> int:
         help="Also score the experimental MNIST/EMNIST digit CNN vs gold votes.",
     )
     parser.add_argument(
+        "--compare-cnn-models",
+        action="store_true",
+        help=(
+            "Compare production hybrid vs old CNN v1 vs new IEC-hybrid CNN v2 "
+            "(and v2+Rapid). Writes storage/accuracy_cnn_model_compare.md."
+        ),
+    )
+    parser.add_argument(
         "--compare-vote-path",
         action="store_true",
         help=(
@@ -1150,9 +1326,9 @@ def main(argv: Optional[List[str]] = None) -> int:
     )
     parser.add_argument(
         "--digit-backend",
-        choices=("heuristic", "rapid", "cnn"),
+        choices=("heuristic", "rapid", "cnn", "cnn-hybrid"),
         default="heuristic",
-        help="RESULT digit path: heuristic (hybrid), rapid (RapidOCR only), or cnn.",
+        help="RESULT digit path: heuristic (production ICR+Rapid), rapid, cnn, or cnn-hybrid.",
     )
     parser.add_argument(
         "--fail-under",
@@ -1207,7 +1383,19 @@ def main(argv: Optional[List[str]] = None) -> int:
     gold = load_gold(GOLD_PATH)
     use_known = False
     compare_cnn = bool(args.compare_digit_cnn)
-    compare_vote_path = bool(args.compare_vote_path) or bool(file_names)
+    compare_vote_path = bool(args.compare_vote_path) or (
+        bool(file_names) and not args.compare_cnn_models
+    )
+
+    if args.compare_cnn_models:
+        model = args.rapidocr_model if args.rapidocr_model != "both" else "small"
+        return _run_cnn_model_compare(
+            gold,
+            file_names,
+            model,
+            debug_root,
+            args.out,
+        )
 
     if compare_vote_path:
         model = args.rapidocr_model if args.rapidocr_model != "both" else "small"

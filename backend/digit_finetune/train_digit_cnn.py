@@ -8,7 +8,10 @@ Handwriting from sample_slips cells is OFF unless you pass BOTH:
 Usage:
   pip install -r requirements-train.txt
   python -m backend.digit_finetune.export_result_cells
-  python -m backend.digit_finetune.train_digit_cnn --epochs 5
+  python -m backend.digit_finetune.train_digit_cnn --epochs 6
+  python -m backend.digit_finetune.train_digit_cnn --include-handwriting --i-confirm-handwriting
+  # Writes backend/models/digit_cnn_iec_hybrid_v2.onnx (does not overwrite v1).
+
 """
 
 from __future__ import annotations
@@ -35,7 +38,7 @@ from backend.digit_finetune.hard_augment import (
 )
 
 MODELS_DIR = Path(__file__).resolve().parents[1] / "models"
-DEFAULT_OUT_ONNX = MODELS_DIR / "digit_cnn_mnist_emnist_aug_v1.onnx"
+DEFAULT_OUT_ONNX = MODELS_DIR / "digit_cnn_iec_hybrid_v2.onnx"
 DEFAULT_CELLS = Path(__file__).resolve().parent / "data" / "cells"
 RUNS_DIR = Path(__file__).resolve().parent / "runs"
 
@@ -129,6 +132,8 @@ def _load_public_pairs(torchvision, max_per_class: int) -> List[Tuple[np.ndarray
 
 
 def _load_handwriting_pairs(cells_dir: Path) -> List[Tuple[np.ndarray, int, str]]:
+    from backend.digit_cnn import cell_to_hybrid_tensor
+
     man_path = cells_dir / "manifest.json"
     if not man_path.exists():
         raise SystemExit(f"No cell manifest at {man_path}. Run export_result_cells first.")
@@ -145,10 +150,16 @@ def _load_handwriting_pairs(cells_dir: Path) -> List[Tuple[np.ndarray, int, str]
         if cell is None:
             continue
         source = str(entry.get("source_image") or entry["file"])
+        tensor, dens = cell_to_hybrid_tensor(cell)
+        canvas = np.clip(tensor * 255.0, 0, 255).astype(np.uint8)
         if label is None:
-            pairs.append((cell, BLANK_CLASS, source))
+            pairs.append((canvas, BLANK_CLASS, source))
+        elif dens < 0.002:
+            # Faint labeled ink: keep the cleaned cell instead of an empty canvas.
+            gray = cell if cell.ndim == 2 else cv2.cvtColor(cell, cv2.COLOR_BGR2GRAY)
+            pairs.append((gray, int(label), source))
         else:
-            pairs.append((cell, int(label), source))
+            pairs.append((canvas, int(label), source))
     print(f"Loaded {len(pairs)} manually labeled handwriting cells from {cells_dir}")
     return pairs
 
@@ -212,7 +223,7 @@ def train(
 
         def __getitem__(self, idx):
             img, lab = self.items[idx]
-            aug, lab2 = hard_augment_digit(img, int(lab))
+            aug, lab2 = hard_augment_digit(img, int(lab), style="hybrid")
             x = torch.from_numpy(aug).unsqueeze(0)
             y = torch.tensor(lab2, dtype=torch.long)
             return x, y

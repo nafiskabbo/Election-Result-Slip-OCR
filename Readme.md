@@ -208,14 +208,14 @@ See [`API_SPECIFICATION.md`](docs/API_SPECIFICATION.md) for the full REST API re
 
 Photographed slips live in `sample_slips/`. Gold labels for the accuracy command are in `tests/fixtures/sample_gold.json`.
 
-Digit CNN fine-tune (MNIST/EMNIST + hard IEC augment) lives under `backend/digit_finetune/` with ONNX weights in `backend/models/`. Export cells, then train:
+Digit CNN fine-tune lives under `backend/digit_finetune/`. Production hybrid does **not** use it. Export hybrid-cleaned cells (labels from gold `vote_cells`), train v2, keep v1, then compare:
 
 ```bash
 ./run.sh digit-export
 pip install -r requirements-train.txt
-./run.sh digit-train --epochs 5
-# later, after confirmation on handwriting:
-./run.sh digit-train --include-handwriting --i-confirm-handwriting
+./run.sh digit-train --epochs 6
+./run.sh digit-train --include-handwriting --i-confirm-handwriting --epochs 8
+./run.sh accuracy --compare-cnn-models --files ResultSlip.jpg,Result_Slip_2024_Previous_Election_Sample.jpg,Result_Slip_2024_Previous_Election_Sample_lower.jpg
 ```
 
 See [`backend/models/README.md`](backend/models/README.md).

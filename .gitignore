@@ -13,6 +13,7 @@ storage/accuracy_report.txt
 storage/accuracy_report.md
 storage/accuracy_report_medium_detail.md
 storage/accuracy_vote_path_compare.md
+storage/accuracy_cnn_model_compare.md
 storage/raw/*
 !storage/raw/.gitkeep
 storage/enhanced/*

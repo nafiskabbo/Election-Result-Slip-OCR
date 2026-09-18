@@ -76,6 +76,57 @@ def test_digits_to_votes_aligned():
     assert digits_to_votes([None, None, None, 1])[0] == 1
 
 
+def test_asa_two_is_not_classified_as_five():
+    from backend.digit_icr import _cell_mask, classify_digit_mask
+
+    cell = cv2.imread(
+        "storage/debug/Result_Slip_2024_Previous_Election_Sample_lower/cells/ASA_cell3.jpg"
+    )
+    if cell is None:
+        pytest.skip("debug ASA cell not present")
+    digit, _ = classify_digit_mask(_cell_mask(cell))
+    assert digit == 2
+
+
+def test_udm_three_is_not_classified_as_seven():
+    from backend.digit_icr import _cell_mask, classify_digit_mask
+
+    cell = cv2.imread(
+        "storage/debug/Result_Slip_2024_Previous_Election_Sample_lower/cells/UDM_cell3.jpg"
+    )
+    if cell is None:
+        pytest.skip("debug UDM cell not present")
+    digit, _ = classify_digit_mask(_cell_mask(cell))
+    assert digit == 3
+
+
+def test_divider_glued_digits_are_not_eaten():
+    import numpy as np
+    from backend.digit_icr import read_four_blocks, suppress_result_dividers
+
+    root = "storage/debug/Result_Slip_2024_Previous_Election_Sample_lower/cells"
+    eff = cv2.imread(f"{root}/EFF_row_raw.jpg")
+    mk = cv2.imread(f"{root}/M.K._row_raw.jpg")
+    if eff is None or mk is None:
+        pytest.skip("debug EFF/M.K. rows not present")
+
+    cleaned = suppress_result_dividers(eff)
+    gray = cv2.cvtColor(cleaned, cv2.COLOR_BGR2GRAY)
+    _h, w = gray.shape
+    third = gray[:, w // 2 : 3 * w // 4]
+    assert int(np.count_nonzero(third < 128)) > 40
+
+    _votes, _, digits = read_four_blocks(eff)
+    assert digits != [None, None, 1, 1]
+    assert digits[2] in {4, 2, None} or digits[3] == 1
+
+    mk_cleaned = suppress_result_dividers(mk)
+    mk_gray = cv2.cvtColor(mk_cleaned, cv2.COLOR_BGR2GRAY)
+    last = mk_gray[:, 3 * mk_gray.shape[1] // 4 :]
+    # The 6 must keep its left stroke; Rapid reads it even when ICR does not.
+    assert int(np.count_nonzero(last < 128)) > 40
+
+
 def test_centered_thin_one_is_not_removed_as_divider():
     import numpy as np
     from backend.digit_icr import _cell_mask, classify_digit_mask, suppress_result_dividers
@@ -234,6 +285,29 @@ def test_fuse_prefers_strong_rapid_over_blank_icr():
     assert votes == 7
     assert used_rapid is True
 
+    # Topology ICR reads a 2 as 5 (ASA) and a 3 as 7 (UDM); Rapid is sure.
+    votes, _, used_rapid = fuse_result_votes(5, 0.80, 2, 0.92, 0.18, registered_voters=3080)
+    assert votes == 2
+    assert used_rapid is True
+
+    votes, _, used_rapid = fuse_result_votes(7, 0.80, 3, 0.92, 0.18, registered_voters=3080)
+    assert votes == 3
+    assert used_rapid is True
+
+    # ICR dropped the leading digit of 41 (4-stem sat on the divider).
+    votes, _, used_rapid = fuse_result_votes(11, 0.80, 41, 0.92, 0.18, registered_voters=3080)
+    assert votes == 41
+    assert used_rapid is True
+
+    # ICR 2-digit near-miss (BOSA 14, RISE 48); Rapid is sure.
+    votes, _, used_rapid = fuse_result_votes(14, 0.80, 15, 0.92, 0.18, registered_voters=3080)
+    assert votes == 15
+    assert used_rapid is True
+
+    votes, _, used_rapid = fuse_result_votes(48, 0.80, 52, 0.92, 0.18, registered_voters=3080)
+    assert votes == 52
+    assert used_rapid is True
+
     assert looks_like_dash_noise(2212) is True
 
 
@@ -365,3 +439,41 @@ def test_blank_image_is_not_treated_as_result_slip(ocr_engine):
     assert data["voting_district"] == "UNKNOWN"
     assert data["slip_reference"].startswith("UNREAD_")
     assert "not_a_result_slip" in data["exception_flags"]
+
+
+def test_vote_cells_gold_and_hybrid_export_split():
+    import json
+    from pathlib import Path
+    from backend.digit_finetune.export_result_cells import validate_cell_labels
+    from backend.digit_icr import hybrid_result_cells, split_result_cells, scale_result_row
+
+    gold = json.loads(Path("tests/fixtures/sample_gold.json").read_text())
+    assert gold["ResultSlip.jpg"]["vote_cells"]["VF PLUS"] == [0, 0, 1, 8]
+    assert gold["ResultSlip.jpg"]["vote_cells"]["SUN"] == [0, 0, 0, 1]
+    assert validate_cell_labels([0, 0, 1, 8]) == [0, 0, 1, 8]
+    assert validate_cell_labels([None, None, None, None]) == [None, None, None, None]
+    assert validate_cell_labels([1, 2]) is None
+
+    row = cv2.imread("storage/debug/ResultSlip/cells/VF_PLUS_row_raw.jpg")
+    if row is None:
+        pytest.skip("debug VF PLUS row not present")
+    cells = hybrid_result_cells(row)
+    assert len(cells) == 4
+    cleaned = split_result_cells(scale_result_row(row))
+    assert cleaned[3].shape == cells[3].shape
+
+
+def test_hybrid_augment_keeps_blank_class_and_shape():
+    import numpy as np
+    from backend.digit_finetune.hard_augment import BLANK_CLASS, hard_augment_digit
+
+    blank = np.zeros((28, 28), dtype=np.uint8)
+    out, lab = hard_augment_digit(blank, BLANK_CLASS, style="hybrid", force_box=True)
+    assert lab == BLANK_CLASS
+    assert out.shape == (28, 28)
+    digit = np.zeros((28, 28), dtype=np.uint8)
+    cv2.circle(digit, (14, 14), 8, 255, 2)
+    out, lab = hard_augment_digit(digit, 0, style="hybrid")
+    assert lab == 0
+    assert out.shape == (28, 28)
+

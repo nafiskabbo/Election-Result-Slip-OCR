@@ -163,7 +163,7 @@ Commands:
   test        Accuracy-check every photo in sample_slips/, then run pytest
   accuracy    Accuracy-check sample_slips/; writes storage/accuracy_report.md
   digit-export  Export RESULT cell crops for digit fine-tune
-  digit-train   Train MNIST/EMNIST digit CNN (hard augment; no handwriting unless confirmed)
+  digit-train   Train digit CNN v2 (keeps old v1 ONNX); handwriting needs confirmation
   help        Show this help
 
 Examples:
@@ -176,9 +176,9 @@ Examples:
   ./run.sh accuracy --raw-ocr --compare-digit-cnn
   ./run.sh accuracy --fail-under 95
   ./run.sh accuracy --debug --files ResultSlip.jpg,Result_Slip_2024_Previous_Election_Sample.jpg,Result_Slip_2024_Previous_Election_Sample_lower.jpg
+  ./run.sh accuracy --compare-cnn-models --files ResultSlip.jpg,Result_Slip_2024_Previous_Election_Sample.jpg,Result_Slip_2024_Previous_Election_Sample_lower.jpg
   ./run.sh digit-export
-  ./run.sh digit-train --epochs 5
-  # After you confirm handwriting fine-tune:
+  ./run.sh digit-train --epochs 6
   ./run.sh digit-train --include-handwriting --i-confirm-handwriting
 EOF
 }
@@ -244,7 +244,7 @@ case "$cmd" in
       echo "Installing training deps..."
       venv/bin/python -m pip install -r requirements-train.txt
     fi
-    echo "Training digit CNN (MNIST/EMNIST + hard augment)..."
+    echo "Training digit CNN v2 (does not overwrite v1)..."
     venv/bin/python -m backend.digit_finetune.train_digit_cnn "$@"
     ;;
   help|-h|--help)

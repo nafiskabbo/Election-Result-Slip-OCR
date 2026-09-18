@@ -222,6 +222,27 @@
       "M.K.": 6,
       "UDM": 3,
       "VF PLUS": 22
+    },
+    "vote_cells": {
+      "A.C.C.": [null, null, null, 1],
+      "AM4C": [null, null, null, 2],
+      "ASA": [null, null, null, 2],
+      "ANC": [null, null, 5, 1],
+      "BOSA": [null, null, 1, 5],
+      "DA": [1, 8, 1, 6],
+      "GOOD": [null, null, 2, 7],
+      "IFP": [null, null, null, 1],
+      "CCC": [null, null, null, 1],
+      "PAC": [null, null, null, 1],
+      "PA": [null, null, null, 7],
+      "RP": [null, null, null, 2],
+      "RISE": [null, null, 5, 2],
+      "SUN": [null, null, null, 1],
+      "M.K.": [null, null, null, 6],
+      "UDM": [null, null, null, 3],
+      "VF PLUS": [null, null, 2, 2],
+      "LAND": [null, null, null, null],
+      "COPE": [null, null, null, null]
     }
   },
   "Result_Slip_2024_Previous_Election_Sample_lower.jpg": {
@@ -254,6 +275,27 @@
       "M.K.": 6,
       "UDM": 3,
       "VF PLUS": 22
+    },
+    "vote_cells": {
+      "A.C.C.": [null, null, null, 1],
+      "AM4C": [null, null, null, 2],
+      "ASA": [null, null, null, 2],
+      "ANC": [null, null, 5, 1],
+      "BOSA": [null, null, 1, 5],
+      "DA": [1, 8, 1, 6],
+      "GOOD": [null, null, 2, 7],
+      "IFP": [null, null, null, 1],
+      "CCC": [null, null, null, 1],
+      "PAC": [null, null, null, 1],
+      "PA": [null, null, null, 7],
+      "RP": [null, null, null, 2],
+      "RISE": [null, null, 5, 2],
+      "SUN": [null, null, null, 1],
+      "M.K.": [null, null, null, 6],
+      "UDM": [null, null, null, 3],
+      "VF PLUS": [null, null, 2, 2],
+      "LAND": [null, null, null, null],
+      "COPE": [null, null, null, null]
     }
   },
   "ResultSlip.jpg": {
@@ -273,6 +315,19 @@
       "EFF": 6,
       "SUN": 1,
       "VF PLUS": 18
+    },
+    "vote_cells": {
+      "ANC": [0, 0, 0, 9],
+      "DA": [0, 0, 1, 8],
+      "EFF": [0, 0, 0, 6],
+      "SUN": [0, 0, 0, 1],
+      "VF PLUS": [0, 0, 1, 8],
+      "GOOD": [null, null, null, null],
+      "ASA": [null, null, null, null],
+      "ACTIONSA": [null, null, null, null],
+      "BOSA": [null, null, null, null],
+      "IFP": [null, null, null, null],
+      "COPE": [null, null, null, null]
     }
   },
   "image1.jpg": {
@@ -292,6 +347,19 @@
       "EFF": 6,
       "SUN": 1,
       "VF PLUS": 18
+    },
+    "vote_cells": {
+      "ANC": [0, 0, 0, 9],
+      "DA": [0, 0, 1, 8],
+      "EFF": [0, 0, 0, 6],
+      "SUN": [0, 0, 0, 1],
+      "VF PLUS": [0, 0, 1, 8],
+      "GOOD": [null, null, null, null],
+      "ASA": [null, null, null, null],
+      "ACTIONSA": [null, null, null, null],
+      "BOSA": [null, null, null, null],
+      "IFP": [null, null, null, null],
+      "COPE": [null, null, null, null]
     }
   }
 }

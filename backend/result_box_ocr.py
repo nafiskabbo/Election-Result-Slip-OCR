@@ -294,6 +294,9 @@ def fuse_result_votes(
                 return int(rapid_votes), min(0.88, rapid_conf), True
         if len(rapid_s) > len(icr_s) and rapid_conf >= 0.85:
             return int(rapid_votes), min(0.88, rapid_conf), True
+        # Same 1–2 digit total: Rapid reads 2/3/15/52; topology ICR often 5/7/14/48.
+        if len(rapid_s) == len(icr_s) <= 2 and rapid_conf >= 0.85:
+            return int(rapid_votes), min(0.88, rapid_conf), True
         # ICR read a trailing 8 as 0 (Ø/8); Rapid kept the 8 (10 → 18).
         if (
             len(rapid_s) == len(icr_s)

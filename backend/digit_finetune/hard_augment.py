@@ -31,6 +31,42 @@ def ink_on_black(img: np.ndarray) -> np.ndarray:
     return g
 
 
+def residual_dash_fragments(canvas: np.ndarray) -> np.ndarray:
+    """Leftover IEC box ticks after hybrid dash-wipe — edge only, not a digit."""
+    out = canvas.copy()
+    h, w = out.shape[:2]
+    color = int(random.randint(90, 180))
+    if random.random() < 0.7:
+        x = 1 if random.random() < 0.5 else w - 2
+        y1 = random.randint(0, max(1, h // 4))
+        y2 = min(h - 1, y1 + random.randint(3, max(4, h // 3)))
+        cv2.line(out, (x, y1), (x, y2), color, 1)
+    if random.random() < 0.4:
+        y = 1 if random.random() < 0.5 else h - 2
+        x1 = random.randint(0, max(1, w // 3))
+        x2 = min(w - 1, x1 + random.randint(4, max(5, w // 2)))
+        cv2.line(out, (x1, y), (x2, y), color, 1)
+    return out
+
+
+def resolution_jitter(canvas: np.ndarray) -> np.ndarray:
+    """Phone-photo / low-res scan: downsample then restore (matches scale_result_row)."""
+    h, w = canvas.shape[:2]
+    scale = random.uniform(0.32, 0.82)
+    small = cv2.resize(
+        canvas,
+        (max(4, int(round(w * scale))), max(4, int(round(h * scale)))),
+        interpolation=cv2.INTER_AREA,
+    )
+    return cv2.resize(small, (w, h), interpolation=cv2.INTER_CUBIC)
+
+
+def faint_ink(canvas: np.ndarray) -> np.ndarray:
+    """Light gray handwritten 1s on phone photos."""
+    gain = random.uniform(0.35, 0.75)
+    return np.clip(canvas.astype(np.float32) * gain, 0, 255).astype(np.uint8)
+
+
 def draw_dashed_box(canvas: np.ndarray, *, density: float = 0.55) -> np.ndarray:
     """Overlay IEC-like dashed box borders on a digit canvas (ink-on-black)."""
     out = canvas.copy()
@@ -93,19 +129,29 @@ def hard_augment_digit(
     *,
     size: int = 28,
     force_box: Optional[bool] = None,
+    style: str = "hybrid",
 ) -> Tuple[np.ndarray, int]:
-    """Apply aggressive IEC-domain augment; may rewrite label 0→0 with slash.
+    """IEC-domain augment.
 
-    Returns (28×28 float32 [0,1] ink-on-black, label).
-    Blank class (10) stays mostly empty with optional dashed box / noise.
+    ``hybrid`` matches production: cells are already dash-wiped, so teach
+    residual edge ticks, resolution jitter, faint ink, and slashed zeros.
+    Full dashed boxes are rare (wipe leftovers), not the main signal.
+    ``legacy`` keeps the old heavy dashed-box overlay for v1 reproduction.
     """
     g = ink_on_black(img)
     if g.shape[0] != size or g.shape[1] != size:
         g = cv2.resize(g, (size, size), interpolation=cv2.INTER_AREA)
 
+    hybrid = (style or "hybrid").strip().lower() != "legacy"
+
     if label == BLANK_CLASS:
         canvas = np.zeros((size, size), dtype=np.uint8)
-        if random.random() < 0.75 or force_box:
+        if hybrid:
+            if random.random() < 0.55 or force_box:
+                canvas = residual_dash_fragments(canvas)
+            if random.random() < 0.18:
+                canvas = draw_dashed_box(canvas, density=random.uniform(0.25, 0.55))
+        elif random.random() < 0.75 or force_box:
             canvas = draw_dashed_box(canvas, density=random.uniform(0.35, 0.7))
         if random.random() < 0.35:
             noise = (np.random.randn(size, size) * random.uniform(4, 14)).astype(np.float32)
@@ -114,20 +160,19 @@ def hard_augment_digit(
             canvas = cv2.GaussianBlur(canvas, (3, 3), 0)
         return canvas.astype(np.float32) / 255.0, BLANK_CLASS
 
-    # Geometric
-    angle = random.uniform(-22, 22)
-    scale = random.uniform(0.75, 1.25)
-    tx = random.uniform(-0.12, 0.12) * size
-    ty = random.uniform(-0.12, 0.12) * size
+    angle = random.uniform(-10, 10) if hybrid else random.uniform(-22, 22)
+    scale = random.uniform(0.82, 1.18) if hybrid else random.uniform(0.75, 1.25)
+    tx = random.uniform(-0.08, 0.08) * size
+    ty = random.uniform(-0.08, 0.08) * size
     M = cv2.getRotationMatrix2D((size / 2, size / 2), angle, scale)
     M[0, 2] += tx
     M[1, 2] += ty
     g = cv2.warpAffine(g, M, (size, size), flags=cv2.INTER_LINEAR, borderValue=0)
 
-    if random.random() < 0.55:
+    if random.random() < (0.18 if hybrid else 0.55):
         g = elasticish(g, alpha=random.uniform(2.5, 6.0), sigma=random.uniform(2.0, 4.0))
 
-    if random.random() < 0.45:
+    if random.random() < (0.22 if hybrid else 0.45):
         pts1 = np.float32([[2, 2], [size - 3, 1], [1, size - 3]])
         jitter = random.uniform(-2.5, 2.5)
         pts2 = np.float32(
@@ -143,11 +188,14 @@ def hard_augment_digit(
     if random.random() < 0.5:
         g = morph_thickness(g, thicker=random.random() < 0.6)
 
-    # Slashed zero (common on IEC slips)
+    if hybrid and random.random() < 0.45:
+        g = resolution_jitter(g)
+    if hybrid and random.random() < 0.30:
+        g = faint_ink(g)
+
     if label == 0 and random.random() < 0.55:
         g = slash_zero(g)
 
-    # Photocopy / phone-photo noise
     if random.random() < 0.6:
         noise = (np.random.randn(size, size) * random.uniform(6, 22)).astype(np.float32)
         g = np.clip(g.astype(np.float32) + noise, 0, 255).astype(np.uint8)
@@ -158,11 +206,14 @@ def hard_augment_digit(
         beta = random.uniform(-25, 25)
         g = np.clip(g.astype(np.float32) * alpha + beta, 0, 255).astype(np.uint8)
 
-    # Dashed RESULT box border (critical domain gap)
-    if force_box is True or (force_box is None and random.random() < 0.85):
+    if hybrid:
+        if force_box is True or (force_box is None and random.random() < 0.22):
+            g = residual_dash_fragments(g)
+        if random.random() < 0.08:
+            g = draw_dashed_box(g, density=random.uniform(0.25, 0.55))
+    elif force_box is True or (force_box is None and random.random() < 0.85):
         g = draw_dashed_box(g, density=random.uniform(0.3, 0.75))
 
-    # Speckle / dropouts
     if random.random() < 0.3:
         mask = np.random.rand(size, size) < 0.02
         g = g.copy()

@@ -19,7 +19,7 @@ ROOT = Path(__file__).resolve().parents[2]
 if str(ROOT) not in sys.path:
     sys.path.insert(0, str(ROOT))
 
-from backend.digit_icr import RESULT_BOXES
+from backend.digit_icr import RESULT_BOXES, hybrid_result_cells
 from backend.page_pipeline import extract_page_from_file
 
 DEFAULT_OUT = Path(__file__).resolve().parent / "data" / "cells"
@@ -47,6 +47,7 @@ def export_cells(
     gold_path: Path = GOLD_PATH,
     out_dir: Path = DEFAULT_OUT,
     rapidocr_model: str = "small",
+    files: Optional[List[str]] = None,
 ) -> Dict[str, Any]:
     gold = json.loads(gold_path.read_text(encoding="utf-8")) if gold_path.exists() else {}
     out_dir.mkdir(parents=True, exist_ok=True)
@@ -57,6 +58,9 @@ def export_cells(
         for p in sample_dir.iterdir()
         if p.suffix.lower() in {".jpg", ".jpeg", ".png", ".webp"} and p.is_file()
     )
+    if files:
+        wanted = {Path(name).name for name in files}
+        images = [p for p in images if p.name in wanted]
     for path in images:
         try:
             enh, extracted = extract_page_from_file(
@@ -79,12 +83,12 @@ def export_cells(
             if w < 8 or h < 8:
                 continue
             row_img = img[y : y + h, x : x + w]
+            cells = hybrid_result_cells(row_img)
+            if len(cells) != RESULT_BOXES:
+                continue
             labels = validate_cell_labels(vote_cells.get(code))
             label_source = "manual_cell" if labels is not None else "unlabeled"
-            for c in range(RESULT_BOXES):
-                x1 = int(w * c / RESULT_BOXES)
-                x2 = int(w * (c + 1) / RESULT_BOXES)
-                cell = row_img[:, x1:x2]
+            for c, cell in enumerate(cells):
                 rel = f"{path.stem}__{code}__c{c}.png"
                 cv2.imwrite(str(out_dir / rel), cell)
                 entry: Dict[str, Any] = {
@@ -121,8 +125,14 @@ def main(argv: Optional[List[str]] = None) -> int:
     p.add_argument("--gold", type=Path, default=GOLD_PATH)
     p.add_argument("--out", type=Path, default=DEFAULT_OUT)
     p.add_argument("--rapidocr-model", default="small", choices=("small", "medium"))
+    p.add_argument(
+        "--files",
+        default=None,
+        help="Comma-separated sample filenames to export.",
+    )
     args = p.parse_args(argv)
-    export_cells(args.sample_dir, args.gold, args.out, args.rapidocr_model)
+    names = [part.strip() for part in (args.files or "").split(",") if part.strip()] or None
+    export_cells(args.sample_dir, args.gold, args.out, args.rapidocr_model, names)
     return 0
 
 

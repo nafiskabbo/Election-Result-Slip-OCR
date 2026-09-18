@@ -1078,13 +1078,14 @@ class OCREngine:
                 r_y1 + pad,
                 max(r_y1 + pad + 1, r_y2 - pad),
             )
-            votes, conf, _digits = read_four_blocks(row_img, backend=digit_backend)
+            block_backend = "cnn" if digit_backend == "cnn-hybrid" else digit_backend
+            votes, conf, _digits = read_four_blocks(row_img, backend=block_backend)
             primary_votes, primary_conf = votes, conf
             rapid_votes: Optional[int] = None
             rapid_conf = 0.0
             engines_disagree = False
             cnn_votes = cnn_conf = None
-            if also_cnn_votes and digit_backend != "cnn":
+            if also_cnn_votes and digit_backend not in {"cnn", "cnn-hybrid"}:
                 cnn_votes, cnn_conf, _ = read_four_blocks(row_img, backend="cnn")
 
             # RapidOCR-only path: in-box 4-cell OCR, not the unconstrained column.
@@ -1112,8 +1113,8 @@ class OCREngine:
                     else:
                         votes, conf = 0, 0.55
 
-            # Hybrid path: heuristic ICR + RapidOCR RESULT-box fusion.
-            elif digit_backend == "heuristic":
+            # Hybrid path: ICR (or experimental CNN) + RapidOCR RESULT-box fusion.
+            elif digit_backend in {"heuristic", "cnn-hybrid"}:
                 from backend.result_box_ocr import (
                     fuse_result_votes,
                     read_result_row_rapid,
