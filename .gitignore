@@ -21,6 +21,7 @@ storage/enhanced/*
 storage/thumbnails/*
 !storage/thumbnails/.gitkeep
 storage/debug/
+storage/vps_check/
 sample_slips/crop_*.png
 sample_slips/anc_boxes.png
 sample_slips/box_*.png

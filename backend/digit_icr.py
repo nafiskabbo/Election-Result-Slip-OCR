@@ -432,10 +432,12 @@ def suppress_result_dividers(
     wipe = np.zeros((h, w), dtype=np.uint8)
 
     num, labels, stats, centroids = cv2.connectedComponentsWithStats(closed)
-    thin_lim = max(5, int(round(cell_w * 0.09)))
-    max_digit_w = int(round(cell_w * 0.90))
-    max_digit_area = int(h * cell_w * 0.50)
+    # After cubic upsample, printed dashes are ~6–8px. A real 4/6/8/9 is much wider.
+    thin_lim = max(8, int(round(cell_w * 0.14)))
+    max_digit_w = int(round(cell_w * 1.35))
+    max_digit_area = int(h * cell_w * 0.70)
     min_digit_h = max(8, int(h * 0.28))
+    min_digit_w = max(thin_lim + 1, int(round(cell_w * 0.18)))
     digit_protect = np.zeros((h, w), dtype=np.uint8)
     for i in range(1, num):
         x, y, cw, ch, area = stats[i]
@@ -443,13 +445,32 @@ def suppress_result_dividers(
         cy = float(centroids[i][1])
         near = min(abs(cx - exp) for exp in internal) <= window if internal else False
         glued_edge = x <= edge_pad or (x + cw) >= w - edge_pad
-        # Printed dashes are ~2–5px after close; a 4/6 on the rule is much wider.
         thin = cw <= thin_lim
-        if (
-            not thin
-            and ch >= min_digit_h
+        holey = False
+        if ch >= min_digit_h and cw > thin_lim:
+            comp = (labels == i).astype(np.uint8) * 255
+            _cnts, hier = cv2.findContours(comp, cv2.RETR_CCOMP, cv2.CHAIN_APPROX_SIMPLE)
+            if hier is not None:
+                holey = bool(np.any(hier[0][:, 3] >= 0))
+        # Upsampled plus-dashes sit on a divider and are wider than a 4 (~0.40 cell).
+        thick_dash = (
+            near
+            and not holey
+            and ch >= int(h * 0.80)
+            and cw >= int(round(cell_w * 0.46))
+        )
+        # Keep Ø/8/9 even when they glue to a divider and span ~1–2 cells.
+        if thick_dash:
+            pass
+        elif (
+            ch >= min_digit_h
+            and cw >= min_digit_w
             and cw <= max_digit_w
             and area <= max_digit_area
+        ) or (
+            holey
+            and cx >= w * 0.62
+            and thin_lim < cw <= int(round(cell_w * 2.25))
         ):
             digit_protect[labels == i] = 255
         tall = ch >= max(4, int(h * 0.16))
@@ -724,6 +745,23 @@ def classify_digit_mask(mask: np.ndarray) -> Tuple[Optional[int], float]:
     ):
         return 3, 0.62
 
+    # Open 9: loop does not close so holes==0; leftover looks like a 7.
+    # Top-left bowl + center stem, no mid-right bump (3) and no 7-bar on the right.
+    if (
+        holes == 0
+        and aspect < 3.2
+        and 0.28 <= cx <= 0.62
+        and z[0] > 0.16
+        and z[1] > 0.20
+        and z[2] < 0.08
+        and z[4] > 0.18
+        and z[5] < 0.10
+        and z[6] < 0.10
+        and z[8] < 0.10
+        and s["top_bot"] > 1.8
+    ):
+        return 9, 0.64
+
     # 7 — hook / crossbar; bottom-left usually open. Tall thin 7s (PA) sit
     # between a compact 7 (aspect < 2.2) and a 1 (aspect >= 4).
     if holes == 0 and z[6] < 0.10:
@@ -817,6 +855,11 @@ def digits_to_votes(digits: List[Optional[int]], *, leading_zeros: bool = False)
     # Lone 5–9 only in the leftmost box is nearly always a misread slashed zero (Ø).
     # A lone digit in a later box (no zero in front) is a real single-digit total.
     if len(vals) == 1 and vals[0] in {5, 6, 7, 8, 9} and idxs[0] == 0:
+        return 0, 0.55
+
+    # Interior-only 7s are leftover dashed rules (image1 AIC → 77).
+    # A real 77 is left-aligned in the first two boxes.
+    if len(vals) >= 2 and idxs[0] > 0 and all(v == 7 for v in vals):
         return 0, 0.55
 
     # Drop leading zeros so Ø/blank-as-0 does not inflate place value.

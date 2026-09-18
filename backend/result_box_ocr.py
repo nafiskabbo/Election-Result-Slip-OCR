@@ -181,6 +181,10 @@ def extra_separator_digit(rapid_votes: int, icr_votes: int) -> bool:
         if rapid_text[:i] + rapid_text[i + 1 :] != icr_text:
             continue
         if ch in {"1", "8"}:
+            # Trailing 1/8 that extends the ICR prefix is a real last-box digit
+            # (481 vs 48), not a dashed insert.
+            if i == len(rapid_text) - 1 and rapid_text.startswith(icr_text):
+                continue
             return True
         # Ø-as-3 / Ø-as-9 / dashed-7 in a leading box (2 → 72, 1 → 91, 9 → 39).
         if ch in {"3", "7", "9"} and i == 0:
@@ -199,8 +203,13 @@ def dash_inflated(rapid_votes: int, icr_votes: int) -> bool:
     if len(rapid_text) <= len(icr_text):
         return False
     stripped = rapid_text.replace("1", "")
-    if stripped == icr_text and rapid_text.count("1") >= 1:
-        return True
+    extra_ones = rapid_text.count("1") - icr_text.count("1")
+    if stripped == icr_text and extra_ones >= 1:
+        # 1512 vs 52 (two inserted 1s). A single trailing 1 is 481 vs 48.
+        if extra_ones >= 2:
+            return True
+        if rapid_text.startswith("1") and not icr_text.startswith("1"):
+            return True
     if rapid_text.endswith(icr_text) and set(rapid_text[: -len(icr_text)]) <= {"1"}:
         return True
     return False
@@ -251,6 +260,9 @@ def fuse_result_votes(
             return int(icr_votes), min(0.93, (icr_conf + rapid_conf) / 2.0 + 0.06), False
         if rapid_ok and icr_s.endswith(rapid_s) and len(icr_s) > len(rapid_s):
             return int(icr_votes), float(icr_conf), False
+        # Rapid dropped a trailing digit (481 → 48).
+        if rapid_ok and icr_s.startswith(rapid_s) and len(icr_s) > len(rapid_s):
+            return int(icr_votes), float(icr_conf), False
         if rapid_ok and 0 < int(rapid_votes) <= 99:
             return int(rapid_votes), min(0.88, rapid_conf), True
         if rapid_ok and len(str(int(rapid_votes))) >= 3:
@@ -282,8 +294,24 @@ def fuse_result_votes(
         # Rapid dropped a leading digit (481 → 81).
         if icr_s.endswith(rapid_s) and len(icr_s) > len(rapid_s):
             return int(icr_votes), float(icr_conf), False
-        # One extra Rapid digit on an already 2–4 digit ICR total is a dash.
+        # One extra Rapid digit on an already 2–4 digit ICR total is a dash
+        # unless Rapid kept a trailing digit ICR dropped (481 vs 48).
         if len(rapid_s) == len(icr_s) + 1 and len(icr_s) >= 2:
+            if extra_separator_digit(int(rapid_votes), int(icr_votes)) or dash_inflated(
+                int(rapid_votes), int(icr_votes)
+            ):
+                return int(icr_votes), min(icr_conf, 0.70), False
+            if rapid_s.startswith(icr_s) and rapid_s[-1] == "1" and rapid_conf >= 0.64:
+                return int(rapid_votes), min(0.88, rapid_conf), True
+            # Leading Ø/dash digit in front of a 2-digit total (218/818 vs 10 → 18).
+            if len(icr_s) == 2:
+                tail = rapid_s[1:]
+                if (
+                    icr_s[-1] == "0"
+                    and tail[-1] != "0"
+                    and rapid_conf >= 0.64
+                ):
+                    return int(tail), min(0.88, rapid_conf), True
             return int(icr_votes), min(icr_conf, 0.70), False
         # ICR incomplete (3 → 27, 10 → 1816). Two Rapid digits vs one ICR digit
         # is a divider-straddling pair unless Rapid inserted a dashed 1/7.
@@ -292,8 +320,18 @@ def fuse_result_votes(
                 return int(icr_votes), min(icr_conf, 0.70), False
             if rapid_conf >= 0.64:
                 return int(rapid_votes), min(0.88, rapid_conf), True
+        # 3 Rapid digits vs 1 ICR digit is leftover-dash inflation (104 vs 7).
+        if len(rapid_s) == 3 and len(icr_s) == 1:
+            return int(icr_votes), min(icr_conf, 0.70), False
         if len(rapid_s) > len(icr_s) and rapid_conf >= 0.85:
             return int(rapid_votes), min(0.88, rapid_conf), True
+        # A divider-glued 9 often loses its loop: Rapid 3/4/7, ICR still 9.
+        if (
+            len(rapid_s) == len(icr_s) == 1
+            and int(icr_votes) == 9
+            and int(rapid_votes) in {3, 4, 7}
+        ):
+            return int(icr_votes), float(icr_conf), False
         # Same 1–2 digit total: Rapid reads 2/3/15/52; topology ICR often 5/7/14/48.
         if len(rapid_s) == len(icr_s) <= 2 and rapid_conf >= 0.85:
             return int(rapid_votes), min(0.88, rapid_conf), True
@@ -302,7 +340,7 @@ def fuse_result_votes(
             len(rapid_s) == len(icr_s)
             and icr_s[-1] == "0"
             and rapid_s[-1] != "0"
-            and rapid_conf >= 0.80
+            and rapid_conf >= 0.64
         ):
             return int(rapid_votes), min(0.88, rapid_conf), True
         return int(icr_votes), float(icr_conf), False
@@ -367,6 +405,7 @@ def read_result_row_rapid(
     cells = split_result_cells(row_bgr)
     cell_tokens: List[str] = []
     cell_confs: List[float] = []
+    cell_hints: List[Tuple[Optional[int], float]] = []
     strong_empty = 0
     for cell in cells:
         hint_digit, hint_conf = _cell_icr_hint(cell) if use_icr_hints else (None, 0.0)
@@ -375,6 +414,7 @@ def read_result_row_rapid(
         if cell_looks_blank(cell):
             cell_tokens.append("")
             cell_confs.append(0.0)
+            cell_hints.append((hint_digit, hint_conf))
             continue
         token = ""
         score = 0.0
@@ -413,7 +453,7 @@ def read_result_row_rapid(
         # at low confidence. A real 8 (VF PLUS / DA last box) is Rapid-confident
         # (~0.99) — do not overwrite that with the ICR Ø hint.
         if use_icr_hints and hint_conf >= 0.70:
-            if hint_digit == 0 and token in {"3", "8", "9"} and score < 0.85:
+            if hint_digit == 0 and token in {"3", "9"} and score < 0.85:
                 token, score = "0", max(score, 0.55)
             elif (
                 hint_digit is None
@@ -423,6 +463,7 @@ def read_result_row_rapid(
                 token, score = "", 0.0
         cell_tokens.append(token)
         cell_confs.append(score)
+        cell_hints.append((hint_digit, hint_conf))
 
     # Neighbor bleed puts two glyphs in one box — keep the right-hand digit
     # unless the previous box is empty (the pair straddled the divider).
@@ -437,11 +478,30 @@ def read_result_row_rapid(
         resolved.append(token)
     cell_tokens = resolved
 
+    # Leading Ø Rapid-as-8 must not prefix a real last-box 8 (818 vs 18).
+    if use_icr_hints:
+        occupied = [i for i, token in enumerate(cell_tokens) if token]
+        if occupied:
+            last = occupied[-1]
+            for i in occupied:
+                if i == last:
+                    continue
+                hint_digit, hint_conf = cell_hints[i]
+                if hint_digit == 0 and hint_conf >= 0.70 and cell_tokens[i] == "8":
+                    cell_tokens[i] = "0"
+
     if use_icr_hints and len(cells) == 4 and strong_empty == 4:
         return 0, 0.55
 
     filled_idx = [i for i, token in enumerate(cell_tokens) if token]
     if filled_idx == [0] and cell_tokens[0] in {"5", "6", "7", "8", "9"}:
+        return 0, 0.55
+    if (
+        filled_idx
+        and filled_idx[0] > 0
+        and len(filled_idx) >= 2
+        and all(cell_tokens[i] == "7" for i in filled_idx)
+    ):
         return 0, 0.55
 
     joined = "".join(cell_tokens).lstrip("0")

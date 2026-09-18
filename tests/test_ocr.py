@@ -67,6 +67,8 @@ def test_digits_to_votes_aligned():
     assert digits_to_votes([0, None, None, None])[0] == 0
     assert digits_to_votes([8, None, None, None])[0] == 0  # misread Ø in first box
     assert digits_to_votes([0, None, 7, None])[0] == 0  # gap noise
+    assert digits_to_votes([None, 7, 7, None])[0] == 0  # interior dashed 7s (AIC)
+    assert digits_to_votes([7, 7, None, None])[0] == 77  # real left-aligned 77
 
     # Right-aligned with empty leading boxes (no written leading zero)
     assert digits_to_votes([None, None, None, 9])[0] == 9
@@ -125,6 +127,18 @@ def test_divider_glued_digits_are_not_eaten():
     last = mk_gray[:, 3 * mk_gray.shape[1] // 4 :]
     # The 6 must keep its left stroke; Rapid reads it even when ICR does not.
     assert int(np.count_nonzero(last < 128)) > 40
+
+
+def test_glued_nine_is_not_read_as_seven():
+    from backend.digit_icr import read_four_blocks
+
+    path = "storage/debug/image1/cells/ANC_row_raw.jpg"
+    row = cv2.imread(path)
+    if row is None:
+        pytest.skip("debug image1 ANC row not present")
+    votes, _, digits = read_four_blocks(row)
+    assert digits[3] == 9
+    assert votes == 9
 
 
 def test_centered_thin_one_is_not_removed_as_divider():
@@ -223,6 +237,16 @@ def test_fuse_prefers_strong_rapid_over_blank_icr():
     assert votes == 481
     assert used_rapid is False
 
+    # Rapid dropped the last 1 of 481.
+    votes, _, used_rapid = fuse_result_votes(481, 0.80, 48, 0.92, 0.20, registered_voters=1149)
+    assert votes == 481
+    assert used_rapid is False
+
+    # ICR dropped the last 1 of 481; Rapid kept it.
+    votes, _, used_rapid = fuse_result_votes(48, 0.80, 481, 0.91, 0.20, registered_voters=1149)
+    assert votes == 481
+    assert used_rapid is True
+
     votes, _, used_rapid = fuse_result_votes(52, 0.80, 1512, 0.90, 0.22, registered_voters=3080)
     assert votes == 52
     assert used_rapid is False
@@ -264,6 +288,8 @@ def test_fuse_prefers_strong_rapid_over_blank_icr():
     assert extra_separator_digit(287, 27) is True
     assert extra_separator_digit(39, 9) is True
     assert extra_separator_digit(222, 22) is True
+    assert extra_separator_digit(481, 48) is False
+    assert dash_inflated(481, 48) is False
     votes, _, used_rapid = fuse_result_votes(2, 0.80, 72, 0.90, 0.18, registered_voters=3080)
     assert votes == 2
     assert used_rapid is False
@@ -280,6 +306,25 @@ def test_fuse_prefers_strong_rapid_over_blank_icr():
     votes, _, used_rapid = fuse_result_votes(10, 0.80, 18, 0.84, 0.20, registered_voters=165)
     assert votes == 18
     assert used_rapid is True
+
+    # Same pattern at the Rapid conf we see on high-res VF PLUS.
+    votes, _, used_rapid = fuse_result_votes(10, 0.80, 18, 0.74, 0.04, registered_voters=165)
+    assert votes == 18
+    assert used_rapid is True
+
+    # registered_voters OCR missed, so Rapid 218/818 is not rejected as too large.
+    votes, _, used_rapid = fuse_result_votes(10, 0.80, 218, 0.79, 0.04, registered_voters=None)
+    assert votes == 18
+    assert used_rapid is True
+
+    votes, _, used_rapid = fuse_result_votes(10, 0.80, 818, 0.85, 0.04, registered_voters=None)
+    assert votes == 18
+    assert used_rapid is True
+
+    # Divider-glued 9 remnant: Rapid 4 must not beat ICR 9.
+    votes, _, used_rapid = fuse_result_votes(9, 0.80, 4, 0.92, 0.20, registered_voters=165)
+    assert votes == 9
+    assert used_rapid is False
 
     votes, _, used_rapid = fuse_result_votes(0, 0.90, 7, 0.92, 0.014, registered_voters=3080)
     assert votes == 7

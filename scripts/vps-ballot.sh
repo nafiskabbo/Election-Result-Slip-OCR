@@ -33,6 +33,8 @@ deploy() {
     --exclude 'storage/raw/*' \
     --exclude 'storage/enhanced/*' \
     --exclude 'storage/thumbnails/*' \
+    --exclude 'storage/debug' \
+    --exclude 'storage/vps_check' \
     --exclude 'backend/digit_finetune/data' \
     --exclude 'backend/digit_finetune/runs' \
     --exclude '__pycache__' \
