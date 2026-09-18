@@ -18,7 +18,7 @@ A full-stack election result digitisation platform that automates the capture, e
 
 | Layer                | Technology                          |
 |----------------------|-------------------------------------|
-| **Backend**          | Python 3.11–3.13, FastAPI, Uvicorn  |
+| **Backend**          | Python 3.12 + numpy 2.5.3 (project `venv/` / Docker), FastAPI, Uvicorn  |
 | **OCR**              | RapidOCR 3.9+ PP-OCRv6 **small** + custom RESULT ICR (hybrid) |
 | **Image Processing** | OpenCV 4.x, Pillow                  |
 | **Database**         | PostgreSQL 16                       |
@@ -90,7 +90,7 @@ The platform is **self-hosted**. The API and the React desk run as one service (
 
 ### Prerequisites
 
-- Python **3.11–3.13** (OCR wheels do not install on 3.14)
+- Python **3.12** via the project `venv/` (OCR wheels do not install on 3.14). Do not use the Homebrew/system Python.
 - pip
 - Node 24+ (to build the React desk)
 - Docker **or** Homebrew `postgresql@16` (Postgres). Docker is only required for the production image.
@@ -101,7 +101,7 @@ The platform is **self-hosted**. The API and the React desk run as one service (
 git clone <repo-url>
 cd ballot
 
-python3.12 -m venv venv   # 3.11 or 3.13 also work
+python3.12 -m venv venv
 source venv/bin/activate
 pip install -r requirements.txt
 cd frontend && npm install && npm run build && cd ..

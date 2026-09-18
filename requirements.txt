@@ -2,12 +2,12 @@ fastapi>=0.110.0
 uvicorn>=0.28.0
 pydantic>=2.6.0
 python-multipart>=0.0.9
-opencv-python-headless>=4.9.0
+opencv-python-headless==5.0.0.93
 pillow>=10.2.0
-numpy>=1.26.0
+numpy==2.5.3
 scipy>=1.12.0
 rapidocr>=3.9.2
-onnxruntime>=1.17.0
+onnxruntime==1.30.0
 pypdfium2>=4.28.0
 zxing-cpp>=2.2.0
 reportlab>=4.1.0

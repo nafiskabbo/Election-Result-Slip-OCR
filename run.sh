@@ -5,18 +5,16 @@ cd "$(dirname "$0")"
 
 pick_python() {
   local cmd ver
-  for cmd in python3.12 python3.11 python3.13 python3; do
+  for cmd in python3.12 python3; do
     if command -v "$cmd" >/dev/null 2>&1; then
       ver="$("$cmd" -c 'import sys; print(f"{sys.version_info.major}.{sys.version_info.minor}")')"
-      case "$ver" in
-        3.11|3.12|3.13)
-          echo "$cmd"
-          return 0
-          ;;
-      esac
+      if [[ "$ver" == "3.12" ]]; then
+        echo "$cmd"
+        return 0
+      fi
     fi
   done
-  echo "Need Python 3.11–3.13. Homebrew python3 is 3.14 here and OCR wheels do not install on it." >&2
+  echo "Need Python 3.12 in this project (venv). Homebrew python3 is often 3.14 and OCR wheels do not install on it." >&2
   exit 1
 }
 
@@ -24,9 +22,9 @@ venv_ok() {
   [[ -x venv/bin/python ]] || return 1
   venv/bin/python - <<'PY' >/dev/null 2>&1
 import sys
-raise SystemExit(0 if sys.version_info[:2] in {(3, 11), (3, 12), (3, 13)} else 1)
+raise SystemExit(0 if sys.version_info[:2] == (3, 12) else 1)
 PY
-  venv/bin/python -c "import fastapi, uvicorn, cv2" >/dev/null 2>&1
+  venv/bin/python -c "import fastapi, uvicorn, cv2, numpy; raise SystemExit(0 if numpy.__version__ == '2.5.3' else 1)" >/dev/null 2>&1
 }
 
 ensure_venv() {

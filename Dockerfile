@@ -9,7 +9,7 @@ COPY frontend/ ./
 ENV VITE_API_URL=
 RUN npm run build
 
-FROM python:3.11-slim
+FROM python:3.12-slim
 
 ENV PYTHONDONTWRITEBYTECODE=1 \
     PYTHONUNBUFFERED=1 \
