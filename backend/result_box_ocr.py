@@ -205,6 +205,9 @@ def peel_leading_rule_digits(rapid_votes: int) -> Optional[int]:
     text = str(int(rapid_votes))
     if len(text) < 4:
         return None
+    # 2187: leading dash ``21`` plus Ø-as-8 in the tens box, last digit is the 7.
+    if text.startswith("21") and text[2] in {"0", "8", "9"}:
+        return int(text[0] + text[-1])
     peeled = text
     while len(peeled) > 2 and peeled[0] in {"1", "2"}:
         peeled = peeled[1:]
