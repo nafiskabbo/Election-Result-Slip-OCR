@@ -328,6 +328,7 @@ def test_fuse_prefers_strong_rapid_over_blank_icr():
     assert peel_leading_rule_digits(1006) == 6
     assert peel_leading_rule_digits(218) is None
     assert peel_leading_rule_digits(1816) is None
+    assert peel_leading_rule_digits(2187) is None
     votes, _, used_rapid = fuse_result_votes(10, 0.74, 2218, 0.825, 0.04, registered_voters=0)
     assert votes == 18
     assert used_rapid is True
@@ -337,6 +338,10 @@ def test_fuse_prefers_strong_rapid_over_blank_icr():
     votes, _, used_rapid = fuse_result_votes(3, 0.67, 2127, 0.778, 0.16, registered_voters=3080)
     assert votes == 27
     assert used_rapid is True
+    # 2187 is dash+Ø noise, not 87; keep ICR 3 rather than invent 87.
+    votes, _, used_rapid = fuse_result_votes(3, 0.67, 2187, 0.778, 0.16, registered_voters=3080)
+    assert votes == 3
+    assert used_rapid is False
     votes, _, used_rapid = fuse_result_votes(0, 0.90, 1816, 0.91, 0.20, registered_voters=3080)
     assert votes == 1816
     assert used_rapid is True

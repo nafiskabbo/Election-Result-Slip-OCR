@@ -212,6 +212,9 @@ def peel_leading_rule_digits(rapid_votes: int) -> Optional[int]:
         peeled = peeled[1:]
     if peeled == text or not (1 <= len(peeled) <= 2):
         return None
+    # 2187 → 87: leftover Ø/dash ``8``/``9``, not a real tens digit (27/18/6).
+    if len(peeled) == 2 and peeled[0] in {"8", "9"}:
+        return None
     return int(peeled)
 
 
