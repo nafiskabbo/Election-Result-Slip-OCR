@@ -226,6 +226,7 @@ def test_fuse_prefers_strong_rapid_over_blank_icr():
         extra_separator_digit,
         fuse_result_votes,
         looks_like_dash_noise,
+        peel_leading_rule_digits,
     )
 
     votes, conf, used_rapid = fuse_result_votes(0, 0.90, 9, 0.92, 0.20, registered_voters=165)
@@ -319,6 +320,25 @@ def test_fuse_prefers_strong_rapid_over_blank_icr():
 
     votes, _, used_rapid = fuse_result_votes(10, 0.80, 818, 0.85, 0.04, registered_voters=None)
     assert votes == 18
+    assert used_rapid is True
+
+    # Linux OpenCV: Rapid prefixes dashed 2/1s. Same totals as Mac Rapid 18/6/27.
+    assert peel_leading_rule_digits(2218) == 18
+    assert peel_leading_rule_digits(2127) == 27
+    assert peel_leading_rule_digits(1006) == 6
+    assert peel_leading_rule_digits(218) is None
+    assert peel_leading_rule_digits(1816) is None
+    votes, _, used_rapid = fuse_result_votes(10, 0.74, 2218, 0.825, 0.04, registered_voters=0)
+    assert votes == 18
+    assert used_rapid is True
+    votes, _, used_rapid = fuse_result_votes(0, 0.87, 1006, 0.65, 0.04, registered_voters=0)
+    assert votes == 6
+    assert used_rapid is True
+    votes, _, used_rapid = fuse_result_votes(3, 0.67, 2127, 0.778, 0.16, registered_voters=3080)
+    assert votes == 27
+    assert used_rapid is True
+    votes, _, used_rapid = fuse_result_votes(0, 0.90, 1816, 0.91, 0.20, registered_voters=3080)
+    assert votes == 1816
     assert used_rapid is True
 
     # Divider-glued 9 remnant: Rapid 4 must not beat ICR 9.

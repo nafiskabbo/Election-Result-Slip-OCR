@@ -195,6 +195,26 @@ def extra_separator_digit(rapid_votes: int, icr_votes: int) -> bool:
     return False
 
 
+def peel_leading_rule_digits(rapid_votes: int) -> Optional[int]:
+    """Drop leading dashed ``1``/``2`` and Ø-as-``0`` digits from a Rapid total.
+
+    Linux OpenCV often leaves extra rule ink that Rapid reads as ``2127`` (27)
+    or ``2218`` (18) or ``1006`` (6). Real 3–4 digit totals such as ``1816``
+    do not collapse to 1–2 digits, so they are left alone.
+    """
+    text = str(int(rapid_votes))
+    if len(text) < 4:
+        return None
+    peeled = text
+    while len(peeled) > 2 and peeled[0] in {"1", "2"}:
+        peeled = peeled[1:]
+    while len(peeled) > 1 and peeled[0] == "0":
+        peeled = peeled[1:]
+    if peeled == text or not (1 <= len(peeled) <= 2):
+        return None
+    return int(peeled)
+
+
 def dash_inflated(rapid_votes: int, icr_votes: int) -> bool:
     """True when Rapid is the ICR total with dashed-line ``1``s inserted."""
     if rapid_votes <= 0 or icr_votes <= 0 or rapid_votes == icr_votes:
@@ -228,6 +248,12 @@ def fuse_result_votes(
     ICR is strong on blank/Ø rows and weak on faint handwriting. Rapid is the
     opposite: it reads real digits well and invents ``1``s from dashed rules.
     """
+    if not registered_voters:
+        registered_voters = None
+    if rapid_votes is not None and rapid_votes > 0:
+        peeled = peel_leading_rule_digits(int(rapid_votes))
+        if peeled is not None:
+            rapid_votes = peeled
 
     def plausible(votes: Optional[int]) -> bool:
         if votes is None or votes < 0:
@@ -375,6 +401,8 @@ def read_result_row_rapid(
     """
     if row_bgr is None or row_bgr.size == 0:
         return 0, 0.2
+    if not registered_voters:
+        registered_voters = None
 
     # Lazy import avoids circular dependency with ocr_engine.
     from backend.digit_icr import (
