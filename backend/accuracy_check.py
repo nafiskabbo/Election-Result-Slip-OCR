@@ -4,11 +4,12 @@ from __future__ import annotations
 
 import argparse
 import json
+import shutil
 import sys
 import time
 from datetime import datetime, timezone
 from pathlib import Path
-from typing import Any, Dict, List, Optional, Tuple
+from typing import Any, Dict, Iterable, List, Optional, Tuple
 
 from backend.config import ROOT_DIR, SAMPLE_DIR, STORAGE_DIR
 from backend.image_enhancer import ImageEnhancer
@@ -28,7 +29,12 @@ TOTAL_MAP = {
 }
 DEFAULT_REPORT_PATH = STORAGE_DIR / "accuracy_report.md"
 DEFAULT_TXT_REPORT_PATH = STORAGE_DIR / "accuracy_report.txt"
-FOCUS_COMPARE_FILES = ("ResultSlip.jpg", "image1.jpg")
+FOCUS_COMPARE_FILES = (
+    "ResultSlip.jpg",
+    "image1.jpg",
+    "Result_Slip_2024_Previous_Election_Sample.jpg",
+    "Result_Slip_2024_Previous_Election_Sample_lower.jpg",
+)
 SNAPSHOT_FIELDS = (
     ("ballot_type", "ballot_type"),
     ("page_number", "page_number"),
@@ -48,12 +54,42 @@ SNAPSHOT_FIELDS = (
 )
 
 
-def list_sample_images(folder: Path) -> List[Path]:
+def list_sample_images(folder: Path, names: Optional[Iterable[str]] = None) -> List[Path]:
     files = [
         path for path in folder.iterdir()
         if path.is_file() and path.suffix.lower() in IMAGE_EXTS
     ]
-    return sorted(files, key=lambda p: p.name.lower())
+    files = sorted(files, key=lambda p: p.name.lower())
+    if names:
+        wanted = {Path(name).name for name in names if str(name).strip()}
+        files = [path for path in files if path.name in wanted]
+    return files
+
+
+def parse_file_list(raw: Optional[str]) -> Optional[List[str]]:
+    if not raw:
+        return None
+    names = [part.strip() for part in raw.split(",") if part.strip()]
+    return names or None
+
+
+def clean_runtime_storage() -> None:
+    """Remove previous uploads and debug dumps so a new run is easy to inspect."""
+    for sub in ("raw", "enhanced", "thumbnails", "debug"):
+        folder = STORAGE_DIR / sub
+        if not folder.exists():
+            continue
+        for path in folder.iterdir():
+            if path.name == ".gitkeep":
+                continue
+            if path.is_dir():
+                shutil.rmtree(path)
+            else:
+                path.unlink()
+    for report in STORAGE_DIR.glob("accuracy_*.md"):
+        report.unlink()
+    for report in STORAGE_DIR.glob("accuracy_*.txt"):
+        report.unlink()
 
 
 def load_gold(path: Path) -> Dict[str, Dict[str, Any]]:
@@ -89,6 +125,7 @@ def snapshot_extracted(extracted: Dict[str, Any]) -> Dict[str, Any]:
             "confidence": row.get("confidence_score"),
             "cnn_votes": row.get("cnn_votes"),
             "cnn_confidence": row.get("cnn_confidence"),
+            "recognition_candidates": row.get("recognition_candidates"),
         })
     snap["parties"] = parties
     return snap
@@ -142,10 +179,12 @@ def score_folder(
     compare_digit_cnn: bool = True,
     rapidocr_model: str = "small",
     digit_backend: str = "heuristic",
+    files: Optional[Iterable[str]] = None,
+    debug_root: Optional[Path] = None,
 ) -> Dict[str, Any]:
     engine = OCREngine(rapidocr_model=rapidocr_model)
     enhancer = ImageEnhancer()
-    images = list_sample_images(folder)
+    images = list_sample_images(folder, files)
     pages: List[Dict[str, Any]] = []
     labeled_ok = labeled_total = 0
     iec_ok = iec_total = 0
@@ -157,6 +196,9 @@ def score_folder(
 
     for path in images:
         started = time.time()
+        debug_dir = None
+        if debug_root is not None:
+            debug_dir = str(debug_root / path.stem)
         try:
             _enh, extracted = extract_page_from_file(
                 str(path),
@@ -165,7 +207,30 @@ def score_folder(
                 digit_backend=backend,
                 also_cnn_votes=compare_digit_cnn and backend == "heuristic",
                 rapidocr_model=rapidocr_model,
+                debug_dir=debug_dir,
             )
+            if debug_dir:
+                debug_path = Path(debug_dir)
+                debug_path.mkdir(parents=True, exist_ok=True)
+                votes = {
+                    row.get("party_code"): row.get("votes")
+                    for row in extracted.get("party_results") or []
+                }
+                (debug_path / "08_votes.json").write_text(
+                    json.dumps(
+                        {
+                            "file": path.name,
+                            "digit_backend": backend,
+                            "ballot_type": extracted.get("ballot_type"),
+                            "voting_district": extracted.get("voting_district"),
+                            "registered_voters": extracted.get("registered_voters"),
+                            "votes": votes,
+                        },
+                        indent=2,
+                    )
+                    + "\n",
+                    encoding="utf-8",
+                )
         except Exception as exc:
             pages.append({
                 "file": path.name,
@@ -268,6 +333,9 @@ def _vote_compare_rows(extracted: Dict[str, Any], gold: Dict[str, Any]) -> List[
         party = by_code.get(code) or {}
         heur = party.get("votes")
         cnn = party.get("cnn_votes")
+        cands = party.get("recognition_candidates") or {}
+        primary = cands.get("primary") or {}
+        rapid = cands.get("rapid") or {}
         rows.append({
             "code": code,
             "expected": expected,
@@ -277,6 +345,10 @@ def _vote_compare_rows(extracted: Dict[str, Any], gold: Dict[str, Any]) -> List[
             "cnn_ok": cnn == expected if cnn is not None else False,
             "heuristic_conf": party.get("confidence_score"),
             "cnn_conf": party.get("cnn_confidence"),
+            "icr_votes": primary.get("votes"),
+            "icr_conf": primary.get("confidence"),
+            "rapid_votes": rapid.get("votes") if rapid else None,
+            "rapid_conf": rapid.get("confidence") if rapid else None,
         })
     return rows
 
@@ -339,6 +411,12 @@ def _show(value: Any) -> str:
     if value is None or value == "":
         return "—"
     return str(value)
+
+
+def _conf(value: Any) -> str:
+    if isinstance(value, (int, float)):
+        return f"{float(value):.2f}"
+    return "—"
 
 
 def _extra_nonzero_votes(page: Dict[str, Any]) -> List[Dict[str, Any]]:
@@ -587,13 +665,13 @@ def format_report_markdown(result: Dict[str, Any], use_known: bool) -> str:
         )
     lines.append("")
 
-    lines.append("## Focus slips (ResultSlip / image1)")
+    lines.append("## Focus slips")
     lines.append("")
     lines.append(
-        "Gold votes on these photos (from the handwritten RESULT boxes): "
-        "**ANC=9, DA=18, EFF=6, M.K.=1, ACTIONSA=18**. "
-        "SUN and VF PLUS rows are blank on the slip; the `1` and `18` sit on "
-        "**M.K.** and **ACTIONSA**."
+        "Gold votes: ResultSlip/image1 are **ANC=9, DA=18, EFF=6, M.K.=1, "
+        "ACTIONSA=18**. The 2024 sample (full and lower-res) is the Sea Point "
+        "provincial slip (**AM4C=2, ANC=51, DA=1816, EFF=41, GOOD=27**, blanks "
+        "such as LAND=0)."
     )
     lines.append("")
 
@@ -601,6 +679,11 @@ def format_report_markdown(result: Dict[str, Any], use_known: bool) -> str:
         p for p in result["pages"]
         if p.get("file") in FOCUS_COMPARE_FILES and not p.get("error")
     ]
+    if not focus_pages:
+        focus_pages = [
+            p for p in result["pages"]
+            if not p.get("error") and not p.get("unlabeled")
+        ]
     if not focus_pages:
         lines.append("_No focus slips scored in this run._")
         lines.append("")
@@ -744,6 +827,7 @@ def format_vote_path_compare_markdown(
     hybrid: Dict[str, Any],
     rapid_only: Dict[str, Any],
     use_known: bool,
+    focus_files: Optional[Iterable[str]] = None,
 ) -> str:
     """Side-by-side RapidOCR+custom ICR vs RapidOCR-only vote accuracy."""
     lines: List[str] = []
@@ -759,7 +843,13 @@ def format_vote_path_compare_markdown(
         "(production desk path)"
     )
     lines.append(
-        "- **Rapid only:** RESULT votes from RapidOCR alone (no topology ICR)"
+        "- **Hybrid (production):** topology ICR on the four boxes, then RapidOCR "
+        "on the same boxes, then `fuse_result_votes` using both totals **and** "
+        "confidence (Rapid needs ≥ 0.55 to compete; 1-vs-2 digit recovery ≥ 0.64)."
+    )
+    lines.append(
+        "- **Rapid only (compare pass):** a second full OCR of the same files with "
+        "`digit_backend=rapid` — not used in the live desk."
     )
     lines.append("")
     lines.append("## Summary")
@@ -823,14 +913,23 @@ def format_vote_path_compare_markdown(
     lines.append(f"**Recommendation:** {recommend}")
     lines.append("")
 
-    focus = [
-        "ResultSlip.jpg",
-        "image1.jpg",
-        "Result_Slip_2024_Previous_Election_Sample.jpg",
-    ]
     hybrid_by = {p["file"]: p for p in hybrid["pages"]}
     rapid_by = {p["file"]: p for p in rapid_only["pages"]}
+    if focus_files:
+        focus = [Path(name).name for name in focus_files]
+    else:
+        focus = list(FOCUS_COMPARE_FILES)
+    for name in list(hybrid_by) + list(rapid_by):
+        if name not in focus:
+            focus.append(name)
     lines.append("## Focus slips — party votes")
+    lines.append("")
+    lines.append(
+        "Production runs **hybrid only**. This table also shows a second Rapid-only "
+        "pass for comparison. Confidence is used in fusion (Rapid needs ≥ 0.55 to "
+        "compete). **H conf** is the fused score on the party row. **ICR conf** / "
+        "**R conf** are the two engines before fusion. **RO conf** is Rapid-only."
+    )
     lines.append("")
     for name in focus:
         hp = hybrid_by.get(name)
@@ -839,8 +938,13 @@ def format_vote_path_compare_markdown(
             continue
         lines.append(f"### `{name}`")
         lines.append("")
-        lines.append("| Party | Expected | Hybrid | Rapid only | Hybrid | Rapid |")
-        lines.append("| --- | ---: | ---: | ---: | --- | --- |")
+        lines.append(
+            "| Party | Expected | Hybrid | H conf | ICR | ICR conf | "
+            "Rapid (hybrid) | R conf | Rapid only | RO conf | Hybrid | Rapid |"
+        )
+        lines.append(
+            "| --- | ---: | ---: | ---: | ---: | ---: | ---: | ---: | ---: | ---: | --- | --- |"
+        )
         codes = [
             r["code"]
             for r in ((rp or hp or {}).get("vote_compare") or (hp or {}).get("vote_compare") or [])
@@ -853,7 +957,10 @@ def format_vote_path_compare_markdown(
             expected = hrow.get("expected", rrow.get("expected"))
             lines.append(
                 f"| {code} | {expected} | {_show(hrow.get('heuristic'))} | "
-                f"{_show(rrow.get('heuristic'))} | "
+                f"{_conf(hrow.get('heuristic_conf'))} | "
+                f"{_show(hrow.get('icr_votes'))} | {_conf(hrow.get('icr_conf'))} | "
+                f"{_show(hrow.get('rapid_votes'))} | {_conf(hrow.get('rapid_conf'))} | "
+                f"{_show(rrow.get('heuristic'))} | {_conf(rrow.get('heuristic_conf'))} | "
                 f"{'OK' if hrow.get('heuristic_ok') else 'MISS'} | "
                 f"{'OK' if rrow.get('heuristic_ok') else 'MISS'} |"
             )
@@ -1038,7 +1145,7 @@ def main(argv: Optional[List[str]] = None) -> int:
         action="store_true",
         help=(
             "Compare hybrid (RapidOCR + custom ICR) vs pure RapidOCR votes "
-            "and write a Markdown report."
+            "and write a Markdown report. Implied when --files selects images."
         ),
     )
     parser.add_argument(
@@ -1059,21 +1166,50 @@ def main(argv: Optional[List[str]] = None) -> int:
         default=DEFAULT_REPORT_PATH,
         help=f"Write report (.md tables by default, or .txt) (default: {DEFAULT_REPORT_PATH}).",
     )
+    parser.add_argument(
+        "--files",
+        default=None,
+        help="Comma-separated sample filenames, e.g. ResultSlip.jpg,Result_Slip_2024_Previous_Election_Sample.jpg",
+    )
+    parser.add_argument(
+        "--debug",
+        action="store_true",
+        help=(
+            "Wipe previous storage dumps and write processed images under "
+            "storage/debug/<filename>/ (01_loaded … 07_result_grid + cells)."
+        ),
+    )
     args = parser.parse_args(argv)
+
+    file_names = parse_file_list(args.files)
+    debug_root: Optional[Path] = None
+    if args.debug:
+        clean_runtime_storage()
+        try:
+            from backend.database import truncate_operational_tables
+
+            truncate_operational_tables()
+        except Exception as exc:
+            print(f"Desk slip rows not cleared: {exc}")
+        debug_root = STORAGE_DIR / "debug"
+        debug_root.mkdir(parents=True, exist_ok=True)
+        print(f"Debug images: {debug_root}")
 
     if not SAMPLE_DIR.exists():
         print(f"No sample folder at {SAMPLE_DIR}", file=sys.stderr)
         return 1
-    images = list_sample_images(SAMPLE_DIR)
+    images = list_sample_images(SAMPLE_DIR, file_names)
     if not images:
-        print(f"No photos found in {SAMPLE_DIR}", file=sys.stderr)
+        wanted = ", ".join(file_names or [])
+        print(f"No photos found in {SAMPLE_DIR}" + (f" matching {wanted}" if wanted else ""), file=sys.stderr)
         return 1
 
     gold = load_gold(GOLD_PATH)
     use_known = False
     compare_cnn = bool(args.compare_digit_cnn)
+    compare_vote_path = bool(args.compare_vote_path) or bool(file_names)
 
-    if args.compare_vote_path:
+    if compare_vote_path:
         model = args.rapidocr_model if args.rapidocr_model != "both" else "small"
         print("=== Hybrid: RapidOCR + custom ICR ===")
         hybrid = score_folder(
@@ -1083,6 +1219,8 @@ def main(argv: Optional[List[str]] = None) -> int:
             compare_digit_cnn=False,
             rapidocr_model=model,
             digit_backend="heuristic",
+            files=file_names,
+            debug_root=debug_root,
         )
         print_report(hybrid, use_known=False)
         print("\n=== RapidOCR only (no ICR) ===")
@@ -1093,20 +1231,36 @@ def main(argv: Optional[List[str]] = None) -> int:
             compare_digit_cnn=False,
             rapidocr_model=model,
             digit_backend="rapid",
+            files=file_names,
+            debug_root=None,
         )
         print_report(rapid_only, use_known=False)
+        h_hits = hybrid.get("heuristic_vote_hits", 0)
+        h_total = hybrid.get("heuristic_vote_total", 0) or 0
+        r_hits = rapid_only.get("heuristic_vote_hits", 0)
+        r_total = rapid_only.get("heuristic_vote_total", 0) or 0
+        print(
+            f"\nParty votes: hybrid {h_hits}/{h_total}  "
+            f"rapid-only {r_hits}/{r_total}"
+        )
+        compare_md = format_vote_path_compare_markdown(
+            hybrid,
+            rapid_only,
+            use_known=False,
+            focus_files=file_names,
+        )
+        report_md = format_report_markdown(hybrid, use_known=False)
+        combined = compare_md.rstrip() + "\n\n---\n\n" + report_md
         out = args.out
         if out.suffix.lower() != ".md":
             out = out.with_suffix(".md")
-        # Default a clear compare filename when using the stock report path.
-        if out.name == DEFAULT_REPORT_PATH.name:
-            out = out.with_name("accuracy_vote_path_compare.md")
         out.parent.mkdir(parents=True, exist_ok=True)
-        out.write_text(
-            format_vote_path_compare_markdown(hybrid, rapid_only, use_known=False),
-            encoding="utf-8",
-        )
+        out.write_text(combined, encoding="utf-8")
         print(f"\nWrote {out}")
+        if out.name == DEFAULT_REPORT_PATH.name:
+            compare_out = out.with_name("accuracy_vote_path_compare.md")
+            compare_out.write_text(compare_md, encoding="utf-8")
+            print(f"Wrote {compare_out}")
         result = hybrid
     elif args.rapidocr_model == "both":
         print("=== RapidOCR PP-OCRv6 SMALL ===")
@@ -1116,6 +1270,8 @@ def main(argv: Optional[List[str]] = None) -> int:
             use_known=use_known,
             compare_digit_cnn=False,
             rapidocr_model="small",
+            files=file_names,
+            debug_root=debug_root,
         )
         print_report(small, use_known=use_known)
         print("\n=== RapidOCR PP-OCRv6 MEDIUM ===")
@@ -1125,6 +1281,8 @@ def main(argv: Optional[List[str]] = None) -> int:
             use_known=use_known,
             compare_digit_cnn=False,
             rapidocr_model="medium",
+            files=file_names,
+            debug_root=None,
         )
         print_report(medium, use_known=use_known)
         out = args.out
@@ -1146,6 +1304,8 @@ def main(argv: Optional[List[str]] = None) -> int:
             compare_digit_cnn=compare_cnn,
             rapidocr_model=args.rapidocr_model,
             digit_backend=args.digit_backend,
+            files=file_names,
+            debug_root=debug_root,
         )
         print_report(result, use_known=use_known)
         if compare_cnn and result.get("cnn_vote_total"):

@@ -28,10 +28,14 @@ def build_rapid_ocr(model_size: str = "small") -> RapidOCR:
 
 from backend.digit_icr import (
     RESULT_BOXES,
+    ResultColumnGeometry,
     align_rows_to_template,
-    detect_result_column_bounds,
+    detect_projection_result_column_bounds,
+    detect_result_column_geometry,
     detect_table_row_lines,
+    extract_result_row,
     read_four_blocks,
+    result_column_bounds_at,
     split_result_cells,
     suppress_result_dividers,
 )
@@ -349,7 +353,14 @@ def parse_vote_digits(text: str) -> Optional[int]:
     if not text:
         return None
     cleaned = text.upper()
-    cleaned = cleaned.replace("Ø", "0").replace("Ó", "0").replace("O", "0").replace("D", "0")
+    cleaned = (
+        cleaned.replace("Ø", "0")
+        .replace("Ó", "0")
+        .replace("O", "0")
+        .replace("D", "0")
+        .replace("Φ", "0")
+        .replace("φ", "0")
+    )
     cleaned = cleaned.replace("I", "1").replace("L", "1")
     # Dashed RESULT-box rules OCR as "|" — they are not ones.
     digits = re.sub(r"\D", "", cleaned)
@@ -785,27 +796,72 @@ class OCREngine:
                 return parsed
         return self.parse_barcode_reference("".join(lines), header_vd)
 
+    def _result_header_bottom(
+        self,
+        boxes: List[Dict[str, Any]],
+        image_height: int,
+    ) -> Optional[float]:
+        """Bottom of the table's RESULT label, used to exclude its header row."""
+        candidates = []
+        for item in boxes:
+            token = re.sub(r"[^A-Z]", "", str(item.get("text") or "").upper())
+            if token != "RESULT":
+                continue
+            points = item.get("box") or []
+            ys = [float(point[1]) for point in points if len(point) >= 2]
+            if not ys:
+                continue
+            center_y = sum(ys) / len(ys)
+            if image_height * 0.16 <= center_y <= image_height * 0.38:
+                candidates.append(max(ys))
+        return max(candidates) if candidates else None
+
     def _write_result_debug(
         self,
         img: np.ndarray,
         debug_dir: str,
         aligned_rows: List[Tuple[int, int]],
-        res_col_left: int,
-        res_col_right: int,
+        result_geometry: ResultColumnGeometry,
         parties_template: List[Tuple[str, str]],
     ) -> None:
         os.makedirs(debug_dir, exist_ok=True)
         vis = img.copy()
-        cv2.line(vis, (res_col_left, 0), (res_col_left, vis.shape[0]), (0, 0, 255), 2)
-        cv2.line(vis, (res_col_right, 0), (res_col_right, vis.shape[0]), (0, 0, 255), 2)
+        top_left, top_right = result_column_bounds_at(result_geometry, 0)
+        bottom_left, bottom_right = result_column_bounds_at(result_geometry, vis.shape[0] - 1)
+        cv2.line(
+            vis,
+            (int(round(top_left)), 0),
+            (int(round(bottom_left)), vis.shape[0] - 1),
+            (0, 0, 255),
+            2,
+        )
+        cv2.line(
+            vis,
+            (int(round(top_right)), 0),
+            (int(round(bottom_right)), vis.shape[0] - 1),
+            (0, 0, 255),
+            2,
+        )
         for y1, y2 in aligned_rows:
-            cv2.line(vis, (res_col_left, y1), (res_col_right, y1), (0, 255, 0), 1)
+            left, right = result_column_bounds_at(result_geometry, y1)
+            cv2.line(
+                vis,
+                (int(round(left)), y1),
+                (int(round(right)), y1),
+                (0, 255, 0),
+                1,
+            )
         cv2.imwrite(os.path.join(debug_dir, "07_result_grid.jpg"), vis)
         cell_dir = os.path.join(debug_dir, "cells")
         os.makedirs(cell_dir, exist_ok=True)
         for (p_name, p_code), (r_y1, r_y2) in zip(parties_template, aligned_rows):
             pad = max(1, int((r_y2 - r_y1) * 0.04))
-            row = img[r_y1 + pad : max(r_y1 + pad + 1, r_y2 - pad), res_col_left:res_col_right]
+            row = extract_result_row(
+                img,
+                result_geometry,
+                r_y1 + pad,
+                max(r_y1 + pad + 1, r_y2 - pad),
+            )
             safe = re.sub(r"[^A-Za-z0-9._+-]+", "_", p_code)
             cv2.imwrite(os.path.join(cell_dir, f"{safe}_row_raw.jpg"), row)
             cleaned = suppress_result_dividers(row)
@@ -930,16 +986,57 @@ class OCREngine:
         row_h = table_h / float(max(1, num_rows)) if num_rows > 0 else 30
 
         gray = cv2.cvtColor(img, cv2.COLOR_BGR2GRAY) if len(img.shape) == 3 else img
-        res_col_left, res_col_right = detect_result_column_bounds(
+        result_geometry = detect_result_column_geometry(
             gray, int(h * 0.28), int(h * 0.88)
         )
-        sig_col_left = max(res_col_right + 2, int(w * 0.76))
+        legacy_left, legacy_right = detect_projection_result_column_bounds(
+            gray, int(h * 0.28), int(h * 0.88)
+        )
+        topology_left, topology_right = result_column_bounds_at(
+            result_geometry, result_geometry[-1]
+        )
+        topology_inset = max(2, int((topology_right - topology_left) * 0.02))
+        close_to_projection = max(
+            abs((topology_left + topology_inset) - legacy_left),
+            abs((topology_right - topology_inset) - legacy_right),
+        ) <= max(5.0, (legacy_right - legacy_left) * 0.05)
+        if (
+            close_to_projection
+            and abs(result_geometry[1]) < 0.015
+            and abs(result_geometry[3]) < 0.015
+        ):
+            # Preserve the established pixel crop on already-rectified scans.
+            # This avoids interpolation/cell-boundary regressions while the
+            # sloped topology path handles phone photos.
+            inner_width = max(1.0, float(legacy_right - legacy_left))
+            outer_inset = inner_width / 0.96 * 0.02
+            result_geometry = (
+                legacy_left - outer_inset,
+                0.0,
+                legacy_right + outer_inset,
+                0.0,
+                result_geometry[-1],
+            )
         sig_col_right = int(w * 0.94)
 
+        row_band_top = int(h * 0.22)
+        row_band_bottom = int(h * 0.92)
+        top_bounds = result_column_bounds_at(result_geometry, row_band_top)
+        bottom_bounds = result_column_bounds_at(result_geometry, row_band_bottom)
+        row_scan_left = max(0, int(min(top_bounds[0], bottom_bounds[0]) - w * 0.02))
+        row_scan_right = min(w, int(max(top_bounds[1], bottom_bounds[1]) + w * 0.02))
         row_lines = detect_table_row_lines(
-            gray, int(w * 0.35), int(w * 0.85), int(h * 0.22), int(h * 0.92)
+            gray, row_scan_left, row_scan_right, row_band_top, row_band_bottom
         )
-        aligned_rows = align_rows_to_template(row_lines, num_rows)
+        header_bottom = self._result_header_bottom(header_boxes, h)
+        aligned_rows = align_rows_to_template(
+            row_lines,
+            num_rows,
+            # OCR boxes can overlap the horizontal rule underneath the word.
+            # Keep the nearest rule at/just above the text bottom; that rule is
+            # the first party-row boundary.
+            min_y=(header_bottom - max(4.0, h * 0.012)) if header_bottom is not None else None,
+        )
         if len(aligned_rows) != num_rows:
             aligned_rows = [
                 (int(table_top + i * row_h), int(table_top + (i + 1) * row_h))
@@ -948,16 +1045,18 @@ class OCREngine:
 
         if debug_dir:
             self._write_result_debug(
-                img, debug_dir, aligned_rows, res_col_left, res_col_right, parties_template
+                img, debug_dir, aligned_rows, result_geometry, parties_template
             )
 
         # RESULT column: higher upscale + binary pass help faint handwritten digits.
+        vote_left = max(0, int(min(top_bounds[0], bottom_bounds[0]) - w * 0.01))
+        vote_right = min(w, int(max(top_bounds[1], bottom_bounds[1]) + w * 0.01))
         vote_boxes, vote_lines = self._ocr_region(
-            img, table_top, res_col_left, table_bottom, res_col_right, upscale_to=960
+            img, table_top, vote_left, table_bottom, vote_right, upscale_to=960
         )
         if binary is not None:
             bin_boxes, bin_lines = self._ocr_region(
-                binary, table_top, res_col_left, table_bottom, res_col_right, upscale_to=960
+                binary, table_top, vote_left, table_bottom, vote_right, upscale_to=960
             )
             vote_boxes = vote_boxes + bin_boxes
             vote_lines = vote_lines + bin_lines
@@ -973,7 +1072,12 @@ class OCREngine:
         for r_idx, (p_name, p_code) in enumerate(parties_template):
             r_y1, r_y2 = aligned_rows[r_idx]
             pad = max(1, int((r_y2 - r_y1) * 0.04))
-            row_img = img[r_y1 + pad : max(r_y1 + pad + 1, r_y2 - pad), res_col_left:res_col_right]
+            row_img = extract_result_row(
+                img,
+                result_geometry,
+                r_y1 + pad,
+                max(r_y1 + pad + 1, r_y2 - pad),
+            )
             votes, conf, _digits = read_four_blocks(row_img, backend=digit_backend)
             primary_votes, primary_conf = votes, conf
             rapid_votes: Optional[int] = None
@@ -983,125 +1087,73 @@ class OCREngine:
             if also_cnn_votes and digit_backend != "cnn":
                 cnn_votes, cnn_conf, _ = read_four_blocks(row_img, backend="cnn")
 
-            # RapidOCR-only path: ignore heuristic ICR; use column + digit-tuned row OCR.
+            # RapidOCR-only path: in-box 4-cell OCR, not the unconstrained column.
             if digit_backend == "rapid":
-                ocr_votes, ocr_conf = self._votes_from_ocr_row(
-                    vote_boxes, r_y1, r_y2, res_col_left, res_col_right
+                from backend.result_box_ocr import (
+                    read_result_row_rapid,
+                    row_ink_density,
                 )
-                from backend.result_box_ocr import read_result_row_rapid, row_ink_density
 
-                if row_ink_density(row_img) >= 0.008 or ocr_votes:
+                ink_density = row_ink_density(row_img)
+                if ink_density < 0.008:
+                    votes, conf = 0, 0.55
+                else:
                     box_votes, box_conf = read_result_row_rapid(
                         self._get_box_rapid_ocr(),
                         row_img,
                         registered_voters=registered_voters,
+                        use_icr_hints=True,
                     )
-                    if box_votes and (box_conf >= 0.85 or box_conf >= ocr_conf):
-                        ocr_votes, ocr_conf = box_votes, box_conf
-                if ocr_votes and (
-                    not registered_voters or ocr_votes <= registered_voters
-                ):
-                    votes, conf = ocr_votes, min(0.70, max(ocr_conf, 0.45))
-                    rapid_votes, rapid_conf = ocr_votes, ocr_conf
-                else:
-                    votes, conf = 0, 0.55
+                    if box_conf >= 0.55 and (
+                        not registered_voters or box_votes <= registered_voters
+                    ):
+                        votes, conf = box_votes, min(0.70, max(box_conf, 0.45))
+                        rapid_votes, rapid_conf = box_votes, box_conf
+                    else:
+                        votes, conf = 0, 0.55
 
             # Hybrid path: heuristic ICR + RapidOCR RESULT-box fusion.
             elif digit_backend == "heuristic":
-                ocr_votes, ocr_conf = self._votes_from_ocr_row(
-                    vote_boxes, r_y1, r_y2, res_col_left, res_col_right
+                from backend.result_box_ocr import (
+                    fuse_result_votes,
+                    read_result_row_rapid,
+                    row_ink_density,
                 )
+
+                ink_density = row_ink_density(row_img)
                 box_votes: Optional[int] = None
                 box_conf = 0.0
-                ink_density = 0.0
-                need_box = (
-                    conf < LOW_VOTE_CONFIDENCE
-                    or votes >= 100
-                    or 0 < votes < 10
-                    or (votes == 0 and conf >= 0.70)
-                )
-                if need_box:
-                    from backend.result_box_ocr import read_result_row_rapid, row_ink_density
-
-                    ink_density = row_ink_density(row_img)
-                    # Skip expensive per-row OCR when the cell band has almost no ink.
-                    if votes >= 100 or conf < LOW_VOTE_CONFIDENCE or ink_density >= 0.012:
-                        box_votes, box_conf = read_result_row_rapid(
-                            self._get_box_rapid_ocr(),
-                            row_img,
-                            registered_voters=registered_voters,
-                            use_icr_hints=True,
-                        )
-                        if box_votes and (box_conf >= 0.85 or box_conf >= ocr_conf):
-                            ocr_votes, ocr_conf = box_votes, box_conf
-
-                use_rapid = False
-                box_agrees_with_icr = box_votes == votes and votes > 0 and box_conf >= 0.65
-                rapid_length_conflict = (
-                    votes > 0
-                    and box_votes is not None
-                    and box_votes > 0
-                    and conf >= 0.50
-                    and abs(len(str(votes)) - len(str(box_votes))) >= 2
-                )
-                if (
-                    votes == 0
-                    and conf >= 0.70
-                    and box_votes
-                    and box_conf >= 0.90
-                    and ink_density >= 0.025
-                ):
-                    use_rapid = True
-                elif (
-                    votes > 0
-                    and box_votes
-                    and box_conf >= 0.90
-                    and box_conf >= conf + 0.08
-                    and not rapid_length_conflict
-                ):
-                    use_rapid = True
-                elif (
-                    conf < LOW_VOTE_CONFIDENCE
-                    and box_votes
-                    and box_conf >= 0.75
-                    and not rapid_length_conflict
-                ):
-                    use_rapid = True
-                elif (
-                    ocr_votes
-                    and ocr_conf >= 0.88
-                    and conf < 0.62
-                    and not (
-                        votes > 0
-                        and conf >= 0.50
-                        and abs(len(str(votes)) - len(str(ocr_votes))) >= 2
+                if ink_density >= 0.008 or votes > 0 or conf < LOW_VOTE_CONFIDENCE:
+                    box_votes, box_conf = read_result_row_rapid(
+                        self._get_box_rapid_ocr(),
+                        row_img,
+                        registered_voters=registered_voters,
+                        use_icr_hints=True,
                     )
-                ):
-                    use_rapid = True
+                    if box_votes == 0 and box_conf < 0.55:
+                        box_votes = None
 
-                if use_rapid and (
-                    not registered_voters or ocr_votes <= registered_voters
-                ):
-                    votes, conf = ocr_votes, min(0.70, max(ocr_conf, 0.55))
-                    rapid_votes, rapid_conf = ocr_votes, ocr_conf
-                elif box_agrees_with_icr:
+                votes, conf, used_rapid = fuse_result_votes(
+                    votes,
+                    conf,
+                    box_votes,
+                    box_conf,
+                    ink_density,
+                    registered_voters=registered_voters,
+                )
+                if box_votes is not None:
                     rapid_votes, rapid_conf = box_votes, box_conf
-                    conf = min(0.93, max(conf, (conf + box_conf) / 2.0 + 0.06))
-                elif (
+                if box_votes is not None and box_votes != primary_votes:
+                    engines_disagree = True
+                    if not used_rapid:
+                        conf = min(conf, 0.68)
+
+                if (
                     votes >= 100
                     and (not registered_voters or votes > registered_voters)
-                    and (not ocr_votes or ocr_conf < 0.55)
+                    and (box_votes is None or box_conf < 0.55)
                 ):
-                    # Dashed Ø boxes often invent multi-hundred totals; drop unconfirmed.
                     votes, conf = 0, min(conf, 0.40)
-
-                candidate_vote = box_votes if box_votes is not None else ocr_votes
-                candidate_conf = box_conf if box_votes is not None else ocr_conf
-                if candidate_vote and candidate_vote != primary_votes:
-                    engines_disagree = True
-                    rapid_votes = candidate_vote
-                    rapid_conf = candidate_conf
-                    conf = min(conf, 0.68)
 
             # A single party cannot exceed registered voters on these slips.
             if registered_voters and votes > registered_voters:
@@ -1110,8 +1162,15 @@ class OCREngine:
             else:
                 exception_flag_vote_overflow = False
 
+            _, row_result_right = result_column_bounds_at(
+                result_geometry, (r_y1 + r_y2) / 2.0
+            )
+            sig_col_left = max(int(round(row_result_right)) + 2, int(w * 0.70))
             sig_crop = img[r_y1:r_y2, sig_col_left:sig_col_right]
             sig_detected, _ = self.detect_signature_presence(sig_crop)
+            row_result_left, row_result_right = result_column_bounds_at(
+                result_geometry, (r_y1 + r_y2) / 2.0
+            )
             row_out = {
                 "row_index": r_idx,
                 "party_name": p_name,
@@ -1130,9 +1189,9 @@ class OCREngine:
                 },
                 "signature_detected": bool(sig_detected),
                 "bbox": {
-                    "x": res_col_left,
+                    "x": int(round(row_result_left)),
                     "y": r_y1,
-                    "width": res_col_right - res_col_left,
+                    "width": int(round(row_result_right - row_result_left)),
                     "height": r_y2 - r_y1,
                 },
                 "_vote_overflow": exception_flag_vote_overflow,

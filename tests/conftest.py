@@ -26,7 +26,7 @@ def _ensure_postgres():
             return
         time.sleep(0.5)
     raise RuntimeError(
-        f"PostgreSQL is not reachable at {DATABASE_URL}. Start it with: docker compose up -d db"
+        f"PostgreSQL is not reachable at {DATABASE_URL}. Start it with: ./run.sh"
     )
 
 

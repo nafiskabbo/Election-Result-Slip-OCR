@@ -16,8 +16,7 @@ from rapidocr import ModelType, OCRVersion, RapidOCR
 
 # Strict cell text: digits / slashed-zero lookalikes only (reject Chinese / words).
 # "|" is a dashed box rule, not a one — do not accept it as a cell digit.
-_CELL_DIGIT_RE = re.compile(r"^[0-9OoØøIlSsbB]{1,2}$")
-_ROW_DIGIT_RE = re.compile(r"^[0-9OoØøIlSsBbD\s.,:/|_-]{1,16}$")
+_ROW_DIGIT_RE = re.compile(r"^[0-9OoØøΦφIlSsBbD\s.,:/|_-]{1,16}$")
 
 
 def build_box_rapid_ocr(model_size: str = "small") -> RapidOCR:
@@ -65,7 +64,6 @@ def _row_variants(row_bgr: np.ndarray, scale: float = 3.5) -> List[np.ndarray]:
         clahe, 255, cv2.ADAPTIVE_THRESH_GAUSSIAN_C, cv2.THRESH_BINARY, 31, 8
     )
     return [
-        up,
         cv2.cvtColor(clahe, cv2.COLOR_GRAY2BGR),
         cv2.cvtColor(otsu, cv2.COLOR_GRAY2BGR),
         cv2.cvtColor(adapt, cv2.COLOR_GRAY2BGR),
@@ -78,7 +76,9 @@ def _cell_variants(cell_bgr: np.ndarray) -> List[np.ndarray]:
         return []
     g = cv2.cvtColor(cell, cv2.COLOR_BGR2GRAY)
     h, w = g.shape[:2]
-    m = max(2, int(min(h, w) * 0.14))
+    # Stay inside the dashed box: outer ink is the rule, not the digit.
+    # Keep this modest — a left-shifted 4 loses its stem if we crop too hard.
+    m = max(2, int(min(h, w) * 0.12))
     g = g[m : h - m, m : w - m]
     if g.size == 0:
         return []
@@ -99,6 +99,8 @@ def _normalize_digit_token(text: str) -> str:
     t = (
         t.replace("Ø", "0")
         .replace("ø", "0")
+        .replace("Φ", "0")
+        .replace("φ", "0")
         .replace("O", "0")
         .replace("o", "0")
         .replace("I", "1")
@@ -107,6 +109,7 @@ def _normalize_digit_token(text: str) -> str:
         .replace("s", "5")
         .replace("B", "8")
         .replace("b", "8")
+        .replace("了", "7")
     )
     return re.sub(r"\D", "", t)
 
@@ -133,17 +136,185 @@ def _ocr_texts(raw: Any) -> List[Tuple[str, float]]:
 
 
 def row_ink_density(row_bgr: np.ndarray) -> float:
-    """Fraction of dark ink after border crop; used to skip empty RESULT rows."""
+    """Fraction of dark pen ink inside the four boxes after dashed rules are removed."""
     if row_bgr is None or row_bgr.size == 0:
         return 0.0
-    g = cv2.cvtColor(_as_bgr(row_bgr), cv2.COLOR_BGR2GRAY)
+    from backend.digit_icr import handwriting_ink_fraction, suppress_result_dividers
+
+    cleaned = suppress_result_dividers(row_bgr)
+    g = cv2.cvtColor(_as_bgr(cleaned), cv2.COLOR_BGR2GRAY)
     h, w = g.shape[:2]
-    m = max(1, int(min(h, w) * 0.10))
+    m = max(1, int(min(h, w) * 0.12))
     g = g[m : h - m, m : w - m]
     if g.size == 0:
         return 0.0
-    _, th = cv2.threshold(g, 0, 255, cv2.THRESH_BINARY_INV + cv2.THRESH_OTSU)
-    return float(np.count_nonzero(th)) / float(th.size)
+    return handwriting_ink_fraction(g)
+
+
+def looks_like_dash_noise(votes: int) -> bool:
+    """True when a Rapid total is almost certainly leftover dashed-box ones."""
+    if votes <= 1:
+        return False
+    text = str(int(votes))
+    if text in {"11", "111", "1111"}:
+        return True
+    if len(text) >= 3 and text.count("1") >= len(text) - 1:
+        return True
+    if len(text) == 4 and text.count("1") >= 2 and text.count("0") >= 2:
+        return True
+    # Four Ø-as-2 / leftover-dash digits (2212) is not a real RESULT total.
+    if len(text) == 4 and set(text) <= {"1", "2"}:
+        return True
+    if len(text) >= 3 and set(text) <= {"0", "3", "8", "9"}:
+        return True
+    return False
+
+
+def extra_separator_digit(rapid_votes: int, icr_votes: int) -> bool:
+    """True when Rapid inserted a dashed ``1`` or slashed-zero ``3``/``8`` into ICR."""
+    if rapid_votes <= 0 or icr_votes <= 0:
+        return False
+    rapid_text, icr_text = str(int(rapid_votes)), str(int(icr_votes))
+    if len(rapid_text) != len(icr_text) + 1:
+        return False
+    for i, ch in enumerate(rapid_text):
+        if rapid_text[:i] + rapid_text[i + 1 :] != icr_text:
+            continue
+        if ch in {"1", "8"}:
+            return True
+        # Ø-as-3 / Ø-as-9 / dashed-7 in a leading box (2 → 72, 1 → 91, 9 → 39).
+        if ch in {"3", "7", "9"} and i == 0:
+            return True
+        # Full-row OCR sometimes duplicates a real digit (22 → 222).
+        if ch in icr_text:
+            return True
+    return False
+
+
+def dash_inflated(rapid_votes: int, icr_votes: int) -> bool:
+    """True when Rapid is the ICR total with dashed-line ``1``s inserted."""
+    if rapid_votes <= 0 or icr_votes <= 0 or rapid_votes == icr_votes:
+        return False
+    rapid_text, icr_text = str(int(rapid_votes)), str(int(icr_votes))
+    if len(rapid_text) <= len(icr_text):
+        return False
+    stripped = rapid_text.replace("1", "")
+    if stripped == icr_text and rapid_text.count("1") >= 1:
+        return True
+    if rapid_text.endswith(icr_text) and set(rapid_text[: -len(icr_text)]) <= {"1"}:
+        return True
+    return False
+
+
+def fuse_result_votes(
+    icr_votes: int,
+    icr_conf: float,
+    rapid_votes: Optional[int],
+    rapid_conf: float,
+    ink_density: float,
+    registered_voters: Optional[int] = None,
+) -> Tuple[int, float, bool]:
+    """Combine topology ICR and in-box RapidOCR into one RESULT total.
+
+    ICR is strong on blank/Ø rows and weak on faint handwriting. Rapid is the
+    opposite: it reads real digits well and invents ``1``s from dashed rules.
+    """
+
+    def plausible(votes: Optional[int]) -> bool:
+        if votes is None or votes < 0:
+            return False
+        if registered_voters is not None and votes > registered_voters:
+            return False
+        return votes <= 9999
+
+    rapid_ok = (
+        plausible(rapid_votes)
+        and rapid_votes is not None
+        and rapid_conf >= 0.55
+        and not looks_like_dash_noise(int(rapid_votes))
+    )
+    icr_ok = plausible(icr_votes)
+
+    if rapid_ok and icr_ok and int(rapid_votes) == int(icr_votes) and icr_votes > 0:
+        return int(icr_votes), min(0.93, (icr_conf + rapid_conf) / 2.0 + 0.06), False
+
+    if rapid_ok and icr_ok and icr_votes > 0 and (
+        dash_inflated(int(rapid_votes), int(icr_votes))
+        or extra_separator_digit(int(rapid_votes), int(icr_votes))
+    ):
+        return int(icr_votes), min(icr_conf, 0.70), False
+
+    if icr_ok and icr_votes >= 100:
+        rapid_s = str(int(rapid_votes)) if rapid_ok else ""
+        icr_s = str(int(icr_votes))
+        if rapid_ok and int(rapid_votes) == icr_votes:
+            return int(icr_votes), min(0.93, (icr_conf + rapid_conf) / 2.0 + 0.06), False
+        if rapid_ok and icr_s.endswith(rapid_s) and len(icr_s) > len(rapid_s):
+            return int(icr_votes), float(icr_conf), False
+        if rapid_ok and 0 < int(rapid_votes) <= 99:
+            return int(rapid_votes), min(0.88, rapid_conf), True
+        if rapid_ok and len(str(int(rapid_votes))) >= 3:
+            return int(icr_votes), float(icr_conf), False
+        return 0, min(icr_conf, 0.40), False
+
+    # ICR often returns a confident 0 on ØØØ9 / faint ink. Trust short Rapid totals.
+    if (
+        rapid_ok
+        and int(rapid_votes) > 0
+        and icr_votes == 0
+        and ink_density >= 0.010
+        and rapid_conf >= 0.75
+        and len(str(int(rapid_votes))) <= 2
+    ):
+        return int(rapid_votes), min(0.88, max(rapid_conf, 0.70)), True
+
+    # ICR empty + 3 Rapid digits is almost always dash/bleed noise (903).
+    # Four digits can be a real RESULT total (DA 1816) when ICR missed the ink.
+    if icr_votes == 0 and rapid_ok and int(rapid_votes) > 0:
+        rapid_len = len(str(int(rapid_votes)))
+        if rapid_len == 3:
+            return 0, max(float(icr_conf), 0.55), False
+        if rapid_len == 4 and rapid_conf >= 0.85:
+            return int(rapid_votes), min(0.88, rapid_conf), True
+
+    if rapid_ok and icr_ok and int(rapid_votes) != int(icr_votes) and icr_votes > 0:
+        rapid_s, icr_s = str(int(rapid_votes)), str(int(icr_votes))
+        # Rapid dropped a leading digit (481 → 81).
+        if icr_s.endswith(rapid_s) and len(icr_s) > len(rapid_s):
+            return int(icr_votes), float(icr_conf), False
+        # One extra Rapid digit on an already 2–4 digit ICR total is a dash.
+        if len(rapid_s) == len(icr_s) + 1 and len(icr_s) >= 2:
+            return int(icr_votes), min(icr_conf, 0.70), False
+        # ICR incomplete (3 → 27, 10 → 1816). Two Rapid digits vs one ICR digit
+        # is a divider-straddling pair unless Rapid inserted a dashed 1/7.
+        if len(rapid_s) == 2 and len(icr_s) == 1:
+            if extra_separator_digit(int(rapid_votes), int(icr_votes)):
+                return int(icr_votes), min(icr_conf, 0.70), False
+            if rapid_conf >= 0.64:
+                return int(rapid_votes), min(0.88, rapid_conf), True
+        if len(rapid_s) > len(icr_s) and rapid_conf >= 0.85:
+            return int(rapid_votes), min(0.88, rapid_conf), True
+        # ICR read a trailing 8 as 0 (Ø/8); Rapid kept the 8 (10 → 18).
+        if (
+            len(rapid_s) == len(icr_s)
+            and icr_s[-1] == "0"
+            and rapid_s[-1] != "0"
+            and rapid_conf >= 0.80
+        ):
+            return int(rapid_votes), min(0.88, rapid_conf), True
+        return int(icr_votes), float(icr_conf), False
+
+    if rapid_ok and int(rapid_votes) > 0 and rapid_conf >= 0.85 and not icr_ok:
+        return int(rapid_votes), min(0.88, rapid_conf), True
+
+    if icr_ok and icr_votes >= 100 and (not rapid_ok or rapid_conf < 0.55):
+        return 0, min(icr_conf, 0.40), False
+
+    if icr_ok and (icr_votes > 0 or not rapid_ok):
+        return int(icr_votes), float(icr_conf), False
+    if rapid_ok:
+        return int(rapid_votes), min(0.70, max(rapid_conf, 0.45)), True
+    return 0, max(float(icr_conf), 0.55), False
 
 
 def read_result_row_rapid(
@@ -156,20 +327,27 @@ def read_result_row_rapid(
 ) -> Tuple[int, float]:
     """OCR one RESULT row (4 boxes) with RapidOCR; return (votes, confidence).
 
-    Tries full-row detection first, then per-cell recognition with a digit-only
-    accept filter. Returns (0, low_conf) when nothing plausible is found.
+    Reads each dashed box first so leftover rules and ink outside the four
+    cells cannot invent digits. Full-row detection is only a fallback when
+    some boxes are still empty. Returns (0, low_conf) when nothing plausible
+    is found.
     """
     if row_bgr is None or row_bgr.size == 0:
         return 0, 0.2
 
     # Lazy import avoids circular dependency with ocr_engine.
-    from backend.digit_icr import split_result_cells, suppress_result_dividers
+    from backend.digit_icr import (
+        cell_looks_blank,
+        scale_result_row,
+        split_result_cells,
+        suppress_result_dividers,
+    )
     from backend.ocr_engine import parse_vote_digits
 
+    row_bgr = scale_result_row(row_bgr)
     row_bgr = suppress_result_dividers(row_bgr)
 
     evidence: dict[int, List[Tuple[float, str]]] = defaultdict(list)
-    row_digits: List[Tuple[str, float]] = []
 
     def consider(text: str, conf: float, source: str) -> None:
         votes = parse_vote_digits(text)
@@ -179,49 +357,37 @@ def read_result_row_rapid(
             return
         if votes > max_plausible:
             return
+        if looks_like_dash_noise(int(votes)):
+            return
         evidence[int(votes)].append((float(conf), source))
 
-    # Full-row path (better for multi-digit totals when det finds ink).
-    for variant in _row_variants(row_bgr):
-        raw = rapid_ocr(
-            variant,
-            use_cls=False,
-            text_score=0.25,
-            box_thresh=0.30,
-            unclip_ratio=2.1,
-        )
-        bits = _ocr_texts(raw)
-        if not bits:
-            continue
-        if not all(_ROW_DIGIT_RE.fullmatch(t.strip()) for t, _ in bits):
-            continue
-        text = " ".join(t for t, _ in bits)
-        conf = float(sum(s for _, s in bits) / max(1, len(bits)))
-        digits = _normalize_digit_token(text)
-        if digits:
-            row_digits.append((digits, conf))
-        consider(text, conf, "row")
-
-    # Per-cell recognition (det off) — only keep clean digit tokens.
     cells = split_result_cells(row_bgr)
     cell_tokens: List[str] = []
     cell_confs: List[float] = []
-    cell_hints: List[Tuple[Optional[int], float]] = []
+    strong_empty = 0
     for cell in cells:
         hint_digit, hint_conf = _cell_icr_hint(cell) if use_icr_hints else (None, 0.0)
-        cell_hints.append((hint_digit, hint_conf))
+        if use_icr_hints and hint_digit is None and hint_conf >= 0.80:
+            strong_empty += 1
+        if cell_looks_blank(cell):
+            cell_tokens.append("")
+            cell_confs.append(0.0)
+            continue
         token = ""
         score = 0.0
         candidates: List[Tuple[str, float]] = []
         for variant in _cell_variants(cell):
             raw = rapid_ocr(variant, use_det=False, use_cls=False, text_score=0.20)
             for text, sc in _ocr_texts(raw):
-                if not _CELL_DIGIT_RE.match(text.strip()):
-                    continue
                 digits = _normalize_digit_token(text)
-                if not digits or len(digits) > 1:
+                if not digits or len(digits) > 2:
+                    continue
+                # Reject leftover words; allow digit homoglyphs (8了 → 87).
+                if not digits.isdigit():
                     continue
                 candidates.append((digits, sc))
+            if any(sc >= 0.96 for _, sc in candidates):
+                break
         if candidates:
             grouped: dict[str, List[float]] = defaultdict(list)
             for digits, sc in candidates:
@@ -229,47 +395,95 @@ def read_result_row_rapid(
             best_digit, best_scores = max(
                 grouped.items(),
                 key=lambda item: (
+                    1 if len(item[0]) == 2 and max(item[1]) >= 0.32 else 0,
                     len(item[1]),
                     sum(item[1]) / len(item[1]),
                     max(item[1]),
                 ),
             )
-            strong_votes = sum(1 for sc in best_scores if sc >= 0.95)
-            if hint_digit is not None or strong_votes >= 2 or (
-                len(best_scores) >= 3 and max(best_scores) >= 0.80
+            if hint_digit is not None or max(best_scores) >= (
+                0.32 if len(best_digit) == 2 else 0.80
             ):
                 token = best_digit
                 score = max(best_scores)
-        # Blank ICR cells: RapidOCR "1" is almost always a leftover dash.
-        if (
-            use_icr_hints
-            and token == "1"
-            and hint_digit is None
-            and hint_conf >= 0.80
-        ):
-            token = ""
-            score = 0.0
+        # Ø cells have ink (so they are not blank) but Rapid often reads 3/8/9
+        # at low confidence. A real 8 (VF PLUS / DA last box) is Rapid-confident
+        # (~0.99) — do not overwrite that with the ICR Ø hint.
+        if use_icr_hints and hint_conf >= 0.70:
+            if hint_digit == 0 and token in {"3", "8", "9"} and score < 0.85:
+                token, score = "0", max(score, 0.55)
+            elif (
+                hint_digit is None
+                and token in {"1", "3", "7", "8"}
+                and cell_looks_blank(cell)
+            ):
+                token, score = "", 0.0
         cell_tokens.append(token)
         cell_confs.append(score)
 
-    joined = "".join(cell_tokens)
-    if joined:
+    # Neighbor bleed puts two glyphs in one box — keep the right-hand digit
+    # unless the previous box is empty (the pair straddled the divider).
+    # A leading 3/7/8 in a 2-char token is Ø or a leftover dash (81→1, 72→2).
+    resolved: List[str] = []
+    for i, token in enumerate(cell_tokens):
+        if len(token) == 2:
+            if i > 0 and resolved[i - 1]:
+                token = token[-1]
+            elif token[0] in {"3", "7", "8"}:
+                token = token[-1]
+        resolved.append(token)
+    cell_tokens = resolved
+
+    if use_icr_hints and len(cells) == 4 and strong_empty == 4:
+        return 0, 0.55
+
+    filled_idx = [i for i, token in enumerate(cell_tokens) if token]
+    if filled_idx == [0] and cell_tokens[0] in {"5", "6", "7", "8", "9"}:
+        return 0, 0.55
+
+    joined = "".join(cell_tokens).lstrip("0")
+    filled = sum(1 for token in cell_tokens if token)
+    if joined and max(cell_confs) >= 0.55 and not looks_like_dash_noise(int(joined)):
         filled_confs = [conf for token, conf in zip(cell_tokens, cell_confs) if token]
         cell_conf = float(sum(filled_confs) / max(1, len(filled_confs)))
-        filled_idxs = [i for i, token in enumerate(cell_tokens) if token]
-        if (
-            len(filled_idxs) == 1
-            and filled_idxs[0] == 2
-            and row_digits
-            and max(conf for _, conf in row_digits) >= 0.80
-        ):
-            row_digit_text = max(row_digits, key=lambda item: item[1])[0]
-            if len(row_digit_text) >= 2 and row_digit_text[-1] != joined[-1]:
-                joined = joined + row_digit_text[-1]
-                cell_conf = max(cell_conf, 0.93)
-        # Require at least one strong cell so dashed-line noise does not invent votes.
-        if max(cell_confs) >= 0.55:
-            consider(joined, cell_conf, "cells")
+        consider(joined, cell_conf, "cells")
+
+    if filled and filled < 4:
+        for variant in _row_variants(row_bgr):
+            raw = rapid_ocr(
+                variant,
+                use_cls=False,
+                text_score=0.25,
+                box_thresh=0.30,
+                unclip_ratio=2.1,
+            )
+            bits = _ocr_texts(raw)
+            if not bits:
+                continue
+            if not all(_ROW_DIGIT_RE.fullmatch(t.strip()) for t, _ in bits):
+                continue
+            text = " ".join(t for t, _ in bits)
+            conf = float(sum(s for _, s in bits) / max(1, len(bits)))
+            consider(text, conf, "row")
+
+        cell_totals = [
+            votes
+            for votes, observations in evidence.items()
+            if any(source == "cells" for _, source in observations)
+        ]
+        for row_votes, observations in list(evidence.items()):
+            if not any(source == "row" for _, source in observations):
+                continue
+            if any(
+                dash_inflated(row_votes, cell_votes)
+                or extra_separator_digit(row_votes, cell_votes)
+                for cell_votes in cell_totals
+            ):
+                kept = [item for item in observations if item[1] != "row"]
+                if kept:
+                    evidence[row_votes] = kept
+                else:
+                    del evidence[row_votes]
 
     if not evidence:
         return 0, 0.30
@@ -280,7 +494,9 @@ def read_result_row_rapid(
         sources = {source for _, source in observations}
         consensus_bonus = min(0.15, 0.05 * (len(observations) - 1))
         source_bonus = 0.04 if len(sources) > 1 else 0.0
-        return max(scores) + consensus_bonus + source_bonus, len(observations), max(scores)
+        # In-box cell reads beat unconstrained full-row detection of dashed 1s.
+        cell_bonus = 0.06 if "cells" in sources else 0.0
+        return max(scores) + consensus_bonus + source_bonus + cell_bonus, len(observations), max(scores)
 
     best_votes, observations = max(evidence.items(), key=candidate_score)
     best_conf = max(score for score, _ in observations)

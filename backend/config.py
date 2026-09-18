@@ -20,11 +20,11 @@ PORT = int(os.environ.get("PORT", "8000"))
 PRODUCTION_DIGIT_BACKEND = os.environ.get("DIGIT_BACKEND", "heuristic").strip().lower()
 PRODUCTION_RAPIDOCR_MODEL = os.environ.get("RAPIDOCR_MODEL", "small").strip().lower()
 
-# Host-side default matches docker-compose (loopback 5433). In the API
-# container Compose sets DATABASE_URL to the `db` service.
+# Host default is Homebrew Postgres on 5432. Docker Compose publishes the
+# `db` service on 127.0.0.1:5433 and sets DATABASE_URL inside the API container.
 DATABASE_URL = os.environ.get(
     "DATABASE_URL",
-    "postgresql://ballot:ballot_local_dev@127.0.0.1:5433/ballot",
+    "postgresql://ballot:ballot_local_dev@127.0.0.1:5432/ballot",
 )
 
 # Comma-separated browser origins allowed to call the API (Vercel URL).

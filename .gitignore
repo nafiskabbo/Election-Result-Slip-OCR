@@ -39,3 +39,4 @@ backend/models/finetune/runs/
 backend/digit_finetune/data/cells/
 backend/digit_finetune/runs/
 *.pt
+.DS_Store

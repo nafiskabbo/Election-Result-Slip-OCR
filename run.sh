@@ -42,21 +42,115 @@ ensure_venv() {
   mkdir -p storage/raw storage/enhanced storage/thumbnails
 }
 
-ensure_postgres() {
-  if ! command -v docker >/dev/null 2>&1; then
-    echo "Docker is required to run PostgreSQL (docker compose up -d db)." >&2
-    exit 1
+load_env() {
+  if [[ -f .env ]]; then
+    set -a
+    # shellcheck disable=SC1091
+    source .env
+    set +a
   fi
-  echo "Starting PostgreSQL..."
-  docker compose up -d db
+}
+
+db_ready() {
+  local url="${DATABASE_URL:-}"
+  [[ -n "$url" ]] || return 1
+  if [[ -x venv/bin/python ]]; then
+    DATABASE_URL="$url" venv/bin/python - <<'PY' >/dev/null 2>&1
+import os, sys
+try:
+    import psycopg
+    with psycopg.connect(os.environ["DATABASE_URL"], connect_timeout=2) as conn:
+        conn.execute("SELECT 1")
+except Exception:
+    raise SystemExit(1)
+PY
+    return $?
+  fi
+  command -v psql >/dev/null 2>&1 || return 1
+  psql "$url" -c "SELECT 1" >/dev/null 2>&1
+}
+
+ensure_homebrew_postgres() {
+  command -v brew >/dev/null 2>&1 || return 1
+  command -v psql >/dev/null 2>&1 || return 1
+  echo "Starting Homebrew PostgreSQL..."
+  brew services start postgresql@16 >/dev/null 2>&1 || brew services start postgresql >/dev/null 2>&1 || true
   local i
   for i in $(seq 1 40); do
-    if docker compose exec -T db pg_isready -U ballot -d ballot >/dev/null 2>&1; then
-      return 0
+    if pg_isready -h 127.0.0.1 -p 5432 >/dev/null 2>&1; then
+      break
     fi
     sleep 0.5
   done
-  echo "PostgreSQL did not become ready." >&2
+  pg_isready -h 127.0.0.1 -p 5432 >/dev/null 2>&1 || return 1
+  psql -d postgres -v ON_ERROR_STOP=1 -c "DO \$\$ BEGIN IF NOT EXISTS (SELECT 1 FROM pg_roles WHERE rolname = 'ballot') THEN CREATE ROLE ballot LOGIN PASSWORD 'ballot_local_dev'; ELSE ALTER ROLE ballot WITH LOGIN PASSWORD 'ballot_local_dev'; END IF; END\$\$;" >/dev/null
+  psql -d postgres -tAc "SELECT 1 FROM pg_database WHERE datname='ballot'" | grep -q 1 || \
+    psql -d postgres -v ON_ERROR_STOP=1 -c "CREATE DATABASE ballot OWNER ballot;" >/dev/null
+  export POSTGRES_PASSWORD="${POSTGRES_PASSWORD:-ballot_local_dev}"
+  export DATABASE_URL="postgresql://ballot:${POSTGRES_PASSWORD}@127.0.0.1:5432/ballot"
+  if [[ ! -f .env ]]; then
+    cp .env.example .env
+  fi
+  if ! grep -q '^DATABASE_URL=' .env; then
+    printf '\nDATABASE_URL=%s\n' "$DATABASE_URL" >> .env
+  else
+    # Keep .env in sync with the Homebrew port when Docker is not in use.
+    python3 - "$DATABASE_URL" <<'PY' || true
+import pathlib, sys
+url = sys.argv[1]
+path = pathlib.Path(".env")
+text = path.read_text()
+lines = []
+found = False
+for line in text.splitlines():
+    if line.startswith("DATABASE_URL="):
+        lines.append(f"DATABASE_URL={url}")
+        found = True
+    else:
+        lines.append(line)
+if not found:
+    lines.append(f"DATABASE_URL={url}")
+path.write_text("\n".join(lines) + "\n")
+PY
+  fi
+  db_ready
+}
+
+ensure_postgres() {
+  load_env
+  if db_ready; then
+    echo "PostgreSQL is reachable."
+    return 0
+  fi
+  if command -v docker >/dev/null 2>&1; then
+    echo "Starting PostgreSQL (Docker)..."
+    docker compose up -d db
+    local i
+    for i in $(seq 1 40); do
+      if docker compose exec -T db pg_isready -U ballot -d ballot >/dev/null 2>&1; then
+        export POSTGRES_PASSWORD="${POSTGRES_PASSWORD:-ballot_local_dev}"
+        export DATABASE_URL="postgresql://ballot:${POSTGRES_PASSWORD}@127.0.0.1:5433/ballot"
+        return 0
+      fi
+      sleep 0.5
+    done
+    echo "Docker PostgreSQL did not become ready; trying Homebrew..." >&2
+  fi
+  if ensure_homebrew_postgres; then
+    echo "PostgreSQL is reachable on 127.0.0.1:5432."
+    return 0
+  fi
+  cat >&2 <<'EOF'
+Could not start a local PostgreSQL.
+
+Options:
+  1. Install Homebrew postgresql@16  (brew install postgresql@16 && brew services start postgresql@16)
+  2. Install Docker Desktop, then: docker compose up -d db
+  3. Point .env at a remote database:
+       DATABASE_URL=postgresql://user:pass@host:5432/ballot
+     The VPS database is loopback-only; tunnel first:
+       ssh -L 5433:127.0.0.1:5433 ubuntu@139.99.135.121
+EOF
   exit 1
 }
 
@@ -81,7 +175,7 @@ Examples:
   ./run.sh accuracy --raw-ocr --compare-vote-path
   ./run.sh accuracy --raw-ocr --compare-digit-cnn
   ./run.sh accuracy --fail-under 95
-  ./run.sh accuracy --out /tmp/accuracy_report.md
+  ./run.sh accuracy --debug --files ResultSlip.jpg,Result_Slip_2024_Previous_Election_Sample.jpg,Result_Slip_2024_Previous_Election_Sample_lower.jpg
   ./run.sh digit-export
   ./run.sh digit-train --epochs 5
   # After you confirm handwriting fine-tune:

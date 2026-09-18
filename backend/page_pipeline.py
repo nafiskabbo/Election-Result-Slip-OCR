@@ -3,6 +3,7 @@
 from __future__ import annotations
 
 import os
+import shutil
 import uuid
 from typing import Callable, Optional, Tuple
 
@@ -65,14 +66,18 @@ def persist_enhanced_page(
     """Enhance, OCR, and write enhanced/thumbnail files for one page."""
     ensure_dirs()
     enhancer = enhancer or ImageEnhancer()
+    stem = os.path.splitext(os.path.basename(original_filename or "page"))[0]
+    debug_dir = str(STORAGE_DIR / "debug" / stem)
+    if os.path.isdir(debug_dir):
+        shutil.rmtree(debug_dir)
     enh_res, extracted = extract_page_from_file(
         file_path,
         page_index,
         enhancer=enhancer,
         ocr_engine=ocr_engine,
         on_stage=on_stage,
+        debug_dir=debug_dir,
     )
-    stem = os.path.splitext(os.path.basename(original_filename or "page"))[0]
     enh_filename = f"enh_{uuid.uuid4().hex[:10]}_{stem}_p{page_index + 1}.jpg"
     disk_enh = STORAGE_DIR / "enhanced" / enh_filename
     disk_thumb = STORAGE_DIR / "thumbnails" / f"thumb_{enh_filename}"

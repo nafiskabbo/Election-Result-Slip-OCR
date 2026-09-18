@@ -93,7 +93,7 @@ The platform is **self-hosted**. The API and the React desk run as one service (
 - Python **3.11–3.13** (OCR wheels do not install on 3.14)
 - pip
 - Node 24+ (to build the React desk)
-- Docker (PostgreSQL, and the production image)
+- Docker **or** Homebrew `postgresql@16` (Postgres). Docker is only required for the production image.
 
 ### Installation
 
@@ -107,7 +107,7 @@ pip install -r requirements.txt
 cd frontend && npm install && npm run build && cd ..
 ```
 
-Copy `.env.example` to `.env` if you want to change the Postgres password or bind port. Defaults match `docker-compose.yml`.
+Copy `.env.example` to `.env` if you want to change the Postgres password or bind port. `./run.sh` starts Homebrew Postgres when Docker is not installed. To use the VPS database instead, SSH-tunnel and set `DATABASE_URL` in `.env`.
 
 ### Running locally
 
@@ -157,7 +157,10 @@ Accuracy only:
 ./run.sh accuracy --raw-ocr --compare-digit-cnn
 ./run.sh accuracy --fail-under 95
 ./run.sh accuracy --out /tmp/accuracy_report.md
+./run.sh accuracy --debug --files ResultSlip.jpg,Result_Slip_2024_Previous_Election_Sample.jpg
 ```
+
+`--debug` wipes previous `storage/raw`, `enhanced`, `thumbnails`, and `debug` dumps, then writes processed images to `storage/debug/<filename>/` (`01_loaded.jpg` … `07_result_grid.jpg`, plus `cells/` and `08_votes.json`).
 
 Default is the Upload API path (`KNOWN_SLIPS` on) with **PP-OCRv6 small** and the **hybrid** RESULT path (heuristic ICR + RapidOCR box fusion). That hybrid beat RapidOCR-only by +8 pp on party votes (`./run.sh accuracy --raw-ocr --compare-vote-path`). **`--raw-ocr`** turns the lookup off. **`--rapidocr-model both`** writes a small-vs-medium compare Markdown. Add **`--compare-digit-cnn`** only for the experimental digit CNN table.
 
