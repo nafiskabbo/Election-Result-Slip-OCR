@@ -777,6 +777,12 @@ table.data tr.national { box-shadow: inset 4px 0 0 var(--national); }
 .scan-next-modal .scan-next-extra {
   margin-top: -0.25rem;
 }
+.scan-next-actions {
+  flex-wrap: wrap;
+}
+.scan-next-actions .btn {
+  flex: 1 1 auto;
+}
 
 .progress {
   margin-top: 1rem;

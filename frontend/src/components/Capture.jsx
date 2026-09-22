@@ -92,6 +92,7 @@ export default function Capture({
   streamRef.current = liveStream;
   const galleryInputRef = useRef(null);
   const cameraInputRef = useRef(null);
+  const nextPageFileRef = useRef(null);
   const pushedCameraRef = useRef(false);
   const autoProcessRef = useRef(false);
   const promptQueueRef = useRef([]);
@@ -262,10 +263,15 @@ export default function Capture({
     }
   };
 
-  const startNextPageScan = async () => {
+  const startNextPageCamera = async () => {
     if (!scanPrompt) return;
     autoProcessRef.current = true;
     await openLiveCamera();
+  };
+
+  const startNextPageUpload = () => {
+    if (!scanPrompt) return;
+    nextPageFileRef.current?.click();
   };
 
   const cameraGuide = scanPrompt
@@ -301,22 +307,38 @@ export default function Capture({
               slip has {scanPrompt.expected} page{scanPrompt.expected === 1 ? "" : "s"}.
               {" "}Received page{scanPrompt.received.length === 1 ? "" : "s"}{" "}
               {scanPrompt.received.join(", ") || "—"}.
-              {" "}Please scan page {scanPrompt.nextPage}.
+              {" "}Please add page {scanPrompt.nextPage}.
             </p>
             {scanPrompt.missing.length > 1 ? (
               <p className="scan-next-extra">Still missing: {scanPrompt.missing.join(", ")}</p>
             ) : null}
-            <div className="modal-actions">
+            <div className="modal-actions scan-next-actions">
               <button type="button" className="btn ghost" onClick={finishCapture}>
                 Finish later
               </button>
-              <button type="button" className="btn" onClick={startNextPageScan}>
-                Scan page {scanPrompt.nextPage}
+              <button type="button" className="btn ghost" onClick={startNextPageUpload}>
+                Choose file
+              </button>
+              <button type="button" className="btn" onClick={startNextPageCamera}>
+                Use camera
               </button>
             </div>
           </div>
         </div>
       )}
+
+      <input
+        ref={nextPageFileRef}
+        type="file"
+        accept="image/*,.pdf,application/pdf"
+        hidden
+        onChange={async (e) => {
+          const files = Array.from(e.target.files || []);
+          e.target.value = "";
+          if (!files.length) return;
+          await runFiles(files, { stayOnCapture: true });
+        }}
+      />
 
       {cameraOpen && liveStream ? (
         <CameraCapture
