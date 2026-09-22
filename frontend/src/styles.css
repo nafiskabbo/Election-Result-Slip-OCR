@@ -541,7 +541,13 @@ table.data tr.national { box-shadow: inset 4px 0 0 var(--national); }
   padding: 1.25rem;
 }
 .drop.over { background: #fff; border-color: var(--ink); }
-.drop h2 { font-family: var(--serif); font-size: 1.3rem; margin: 0 0 0.85rem; }
+.drop h2 { font-family: var(--serif); font-size: 1.3rem; margin: 0 0 0.35rem; }
+.drop-hint {
+  margin: 0 0 0.85rem;
+  color: var(--muted);
+  font-size: 0.92rem;
+  line-height: 1.35;
+}
 .drop-actions {
   display: flex;
   flex-wrap: wrap;
@@ -717,6 +723,59 @@ table.data tr.national { box-shadow: inset 4px 0 0 var(--national); }
   padding: 0.3rem 0.4rem;
   min-height: 2.2rem;
   font-size: 0.8rem;
+}
+.capture-thumb-label {
+  font-size: 0.75rem;
+  color: var(--muted);
+  text-align: center;
+}
+.capture-results {
+  margin-top: 1rem;
+  border: 1px solid var(--rule);
+  background: #fff;
+  padding: 0.9rem 1rem;
+}
+.capture-results-head {
+  display: flex;
+  flex-wrap: wrap;
+  align-items: center;
+  justify-content: space-between;
+  gap: 0.75rem;
+  margin-bottom: 0.75rem;
+}
+.capture-results-head h2 {
+  margin: 0;
+  font-family: var(--serif);
+  font-size: 1.1rem;
+}
+.capture-result-list,
+.capture-page-list {
+  list-style: none;
+  margin: 0;
+  padding: 0;
+  display: grid;
+  gap: 0.55rem;
+}
+.capture-result-list li,
+.capture-page-list li {
+  padding: 0.55rem 0.65rem;
+  border: 1px solid var(--rule);
+  background: var(--sheet);
+}
+.capture-result-title {
+  font-weight: 600;
+}
+.capture-result-meta,
+.capture-page-list li {
+  color: var(--muted);
+  font-size: 0.9rem;
+  line-height: 1.35;
+}
+.capture-page-list {
+  margin-top: 0.7rem;
+}
+.scan-next-modal .scan-next-extra {
+  margin-top: -0.25rem;
 }
 
 .progress {

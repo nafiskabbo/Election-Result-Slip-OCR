@@ -86,7 +86,16 @@ function canvasToJpegFile(canvas) {
   });
 }
 
-export default function CameraCapture({ stream, disabled, pageCount = 0, onCapture, onClose, onFallback }) {
+export default function CameraCapture({
+  stream,
+  disabled,
+  pageCount = 0,
+  guideText = "Fill the box with the slip",
+  statusExtra = null,
+  onCapture,
+  onClose,
+  onFallback,
+}) {
   const videoRef = useRef(null);
   const frameRef = useRef(null);
   const [ready, setReady] = useState(false);
@@ -194,11 +203,14 @@ export default function CameraCapture({ stream, disabled, pageCount = 0, onCaptu
             <span className="camera-corner camera-corner-bl" />
             <span className="camera-corner camera-corner-br" />
           </div>
-          <p className="camera-guide">Fill the box with the slip</p>
+          <p className="camera-guide">{guideText}</p>
         </div>
         <div className="camera-status">
           <span className={error ? "fail" : ""}>{status}</span>
-          {pageCount > 0 && <span className="camera-count">{pageCount} captured</span>}
+          {statusExtra ? <span className="camera-count">{statusExtra}</span> : null}
+          {!statusExtra && pageCount > 0 ? (
+            <span className="camera-count">{pageCount} captured</span>
+          ) : null}
         </div>
       </div>
 
@@ -216,7 +228,7 @@ export default function CameraCapture({ stream, disabled, pageCount = 0, onCaptu
         />
 
         <div className="camera-side camera-side-right">
-          {pageCount > 0 ? (
+          {pageCount > 0 || statusExtra ? (
             <button type="button" className="btn" onClick={handleClose} disabled={disabled}>
               Done
             </button>

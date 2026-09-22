@@ -5,6 +5,72 @@ import CameraCapture, { openRearCamera } from "./CameraCapture.jsx";
 import InfoTip from "./InfoTip.jsx";
 import ProcessingProgress, { initialProcess, progressFromEvent } from "./ProcessingProgress.jsx";
 
+function buildPendingItem(file, index = 0) {
+  return {
+    id: `${Date.now()}-${index}-${Math.random().toString(36).slice(2, 7)}`,
+    file,
+    preview: URL.createObjectURL(file),
+  };
+}
+
+function summarizeUpload(data) {
+  const pages = data?.pages || [];
+  const bySlip = new Map();
+
+  for (const page of pages) {
+    const grouping = page.grouping || {};
+    const slipId = grouping.slip_id || page.slip_id;
+    if (!slipId) continue;
+
+    const missing = Array.isArray(grouping.missing_pages) ? grouping.missing_pages : [];
+    const expected = grouping.expected_pages || page.page_total || 1;
+    const received = Array.isArray(grouping.received_pages)
+      ? grouping.received_pages
+      : [page.page_number].filter(Boolean);
+
+    const prior = bySlip.get(slipId);
+    if (!prior) {
+      bySlip.set(slipId, {
+        slipId,
+        ballotType: page.ballot_type || "",
+        barcode: page.barcode_text || "",
+        expected,
+        received: [...new Set(received)].sort((a, b) => a - b),
+        missing: [...missing].sort((a, b) => a - b),
+        isComplete: Boolean(grouping.is_complete),
+        status: grouping.status || "",
+        pages: [page],
+      });
+      continue;
+    }
+
+    prior.pages.push(page);
+    prior.expected = Math.max(prior.expected || 0, expected || 0);
+    prior.received = [...new Set([...prior.received, ...received])].sort((a, b) => a - b);
+    prior.missing = [...missing].sort((a, b) => a - b);
+    prior.isComplete = Boolean(grouping.is_complete);
+    prior.status = grouping.status || prior.status;
+    if (page.barcode_text) prior.barcode = page.barcode_text;
+    if (page.ballot_type) prior.ballotType = page.ballot_type;
+  }
+
+  const slips = [...bySlip.values()];
+  const nextPrompts = slips
+    .filter((slip) => !slip.isComplete && slip.missing.length > 0 && slip.expected > 1)
+    .map((slip) => ({
+      ...slip,
+      nextPage: slip.missing[0],
+    }));
+
+  return {
+    pageCount: pages.length,
+    slipCount: slips.length,
+    pages,
+    slips,
+    nextPrompts,
+  };
+}
+
 export default function Capture({
   busy,
   setBusy,
@@ -18,6 +84,8 @@ export default function Capture({
   const [liveStream, setLiveStream] = useState(null);
   const [pending, setPending] = useState([]);
   const [process, setProcess] = useState(null);
+  const [lastResult, setLastResult] = useState(null);
+  const [scanPrompt, setScanPrompt] = useState(null);
   const pendingRef = useRef(pending);
   pendingRef.current = pending;
   const streamRef = useRef(null);
@@ -25,6 +93,8 @@ export default function Capture({
   const galleryInputRef = useRef(null);
   const cameraInputRef = useRef(null);
   const pushedCameraRef = useRef(false);
+  const autoProcessRef = useRef(false);
+  const promptQueueRef = useRef([]);
 
   useEffect(() => () => {
     pendingRef.current.forEach((item) => URL.revokeObjectURL(item.preview));
@@ -71,23 +141,53 @@ export default function Capture({
     return () => window.removeEventListener("popstate", onPop);
   }, [cameraOpen, liveStream]);
 
-  const runFiles = async (fileList) => {
+  const finishCapture = async () => {
+    setScanPrompt(null);
+    promptQueueRef.current = [];
+    setLastResult(null);
+    setProcess(null);
+    await onDone();
+  };
+
+  const handleUploadResult = (data) => {
+    const summary = summarizeUpload(data);
+    setLastResult(summary);
+
+    const pages = summary.pageCount;
+    const slips = summary.slipCount;
+    const duration = data.total_elapsed_seconds != null
+      ? ` · ${formatDuration(data.total_elapsed_seconds)}`
+      : "";
+    notify(
+      `${pages} page${pages === 1 ? "" : "s"} grouped into ${slips} slip${slips === 1 ? "" : "s"}${duration}`,
+      "pass",
+    );
+
+    const touched = new Set(summary.slips.map((slip) => slip.slipId));
+    const kept = promptQueueRef.current.filter((item) => !touched.has(item.slipId));
+    const next = [...summary.nextPrompts, ...kept];
+    promptQueueRef.current = next;
+    setScanPrompt(next[0] || null);
+
+    return summary;
+  };
+
+  const runFiles = async (fileList, { stayOnCapture = false } = {}) => {
     const files = Array.from(fileList || []);
-    if (!files.length) return;
+    if (!files.length) return null;
     setBusy(true);
     setProcess(initialProcess(files.length));
+    setScanPrompt(null);
     try {
       const data = await api.upload(files, {
         onProgress: (event) => setProcess((prev) => progressFromEvent(event, prev)),
       });
-      const pages = data.processed_pages_count;
-      const slips = data.affected_slips.length;
-      const duration = data.total_elapsed_seconds != null
-        ? ` · ${formatDuration(data.total_elapsed_seconds)}`
-        : "";
-      notify(`${pages} page${pages === 1 ? "" : "s"} grouped into ${slips} slip${slips === 1 ? "" : "s"}${duration}`, "pass");
-      await new Promise((resolve) => window.setTimeout(resolve, 1100));
-      await onDone();
+      const summary = handleUploadResult(data);
+      if (!summary.nextPrompts.length && !stayOnCapture) {
+        await new Promise((resolve) => window.setTimeout(resolve, 900));
+        await finishCapture();
+      }
+      return summary;
     } catch (err) {
       notify(err.message, "fail");
       setProcess((prev) => (prev ? {
@@ -97,9 +197,24 @@ export default function Capture({
         message: err.message,
         remainingSeconds: 0,
       } : prev));
+      return null;
     } finally {
       setBusy(false);
     }
+  };
+
+  const queueFiles = (fileList, { message } = {}) => {
+    const files = Array.from(fileList || []).filter(Boolean);
+    if (!files.length) return;
+    setPending((prev) => [
+      ...prev,
+      ...files.map((file, index) => buildPendingItem(file, prev.length + index)),
+    ]);
+    notify(
+      message
+        || (files.length === 1 ? "Page added" : `${files.length} pages added`),
+      "info",
+    );
   };
 
   const uploadPending = async () => {
@@ -109,13 +224,17 @@ export default function Capture({
       prev.forEach((item) => URL.revokeObjectURL(item.preview));
       return [];
     });
-    await runFiles(files);
+    await runFiles(files, { stayOnCapture: true });
   };
 
-  const addCameraPage = (file) => {
-    const preview = URL.createObjectURL(file);
-    setPending((prev) => [...prev, { id: `${Date.now()}-${prev.length}`, file, preview }]);
-    notify("Page captured", "info");
+  const addCameraPage = async (file) => {
+    if (autoProcessRef.current || scanPrompt) {
+      closeCamera({ fromHistory: false });
+      autoProcessRef.current = false;
+      await runFiles([file], { stayOnCapture: true });
+      return;
+    }
+    queueFiles([file], { message: "Page captured" });
   };
 
   const removePending = (id) => {
@@ -131,8 +250,8 @@ export default function Capture({
   };
 
   const openLiveCamera = async (event) => {
-    event.stopPropagation();
-    event.preventDefault();
+    event?.stopPropagation?.();
+    event?.preventDefault?.();
     try {
       const stream = await openRearCamera();
       setLiveStream(stream);
@@ -143,6 +262,20 @@ export default function Capture({
     }
   };
 
+  const startNextPageScan = async () => {
+    if (!scanPrompt) return;
+    autoProcessRef.current = true;
+    await openLiveCamera();
+  };
+
+  const cameraGuide = scanPrompt
+    ? `Scan page ${scanPrompt.nextPage} of ${scanPrompt.expected}`
+    : "Fill the box with the slip";
+
+  const cameraStatusExtra = scanPrompt
+    ? `${scanPrompt.ballotType || "Slip"} · missing ${scanPrompt.missing.join(", ")}`
+    : null;
+
   return (
     <section className={cameraOpen && liveStream ? "capture-camera" : ""}>
       {!(cameraOpen && liveStream) && (
@@ -151,7 +284,7 @@ export default function Capture({
             <h1>Capture</h1>
             <InfoTip label="Capture help">
               <p>Photograph each page so the slip fills the box. Everything outside the box is dropped.</p>
-              <p>JPEG, PNG, and PDF are accepted. Capture pages one at a time, then upload together.</p>
+              <p>Add several pages from the camera or gallery, then process them together. If OCR sees a multi-page slip, you will be asked to scan the next missing page.</p>
             </InfoTip>
           </div>
         </header>
@@ -159,14 +292,46 @@ export default function Capture({
 
       {process && !(cameraOpen && liveStream) ? <ProcessingProgress progress={process} /> : null}
 
+      {scanPrompt && !busy && !(cameraOpen && liveStream) && (
+        <div className="modal-back" role="dialog" aria-modal="true" aria-labelledby="scan-next-title">
+          <div className="modal scan-next-modal" onClick={(e) => e.stopPropagation()}>
+            <h3 id="scan-next-title">Scan the next page</h3>
+            <p>
+              This {scanPrompt.ballotType ? `${scanPrompt.ballotType.toLowerCase()} ` : ""}
+              slip has {scanPrompt.expected} page{scanPrompt.expected === 1 ? "" : "s"}.
+              {" "}Received page{scanPrompt.received.length === 1 ? "" : "s"}{" "}
+              {scanPrompt.received.join(", ") || "—"}.
+              {" "}Please scan page {scanPrompt.nextPage}.
+            </p>
+            {scanPrompt.missing.length > 1 ? (
+              <p className="scan-next-extra">Still missing: {scanPrompt.missing.join(", ")}</p>
+            ) : null}
+            <div className="modal-actions">
+              <button type="button" className="btn ghost" onClick={finishCapture}>
+                Finish later
+              </button>
+              <button type="button" className="btn" onClick={startNextPageScan}>
+                Scan page {scanPrompt.nextPage}
+              </button>
+            </div>
+          </div>
+        </div>
+      )}
+
       {cameraOpen && liveStream ? (
         <CameraCapture
           stream={liveStream}
           disabled={busy}
           pageCount={pending.length}
+          guideText={cameraGuide}
+          statusExtra={cameraStatusExtra}
           onCapture={addCameraPage}
-          onClose={() => closeCamera({ fromHistory: false })}
+          onClose={() => {
+            autoProcessRef.current = false;
+            closeCamera({ fromHistory: false });
+          }}
           onFallback={() => {
+            autoProcessRef.current = Boolean(scanPrompt);
             closeCamera({ fromHistory: false });
             openNativeCamera();
           }}
@@ -179,10 +344,11 @@ export default function Capture({
           onDrop={(e) => {
             e.preventDefault();
             setOver(false);
-            runFiles(e.dataTransfer.files);
+            queueFiles(e.dataTransfer.files);
           }}
         >
-          <h2>Add slips</h2>
+          <h2>Add slip pages</h2>
+          <p className="drop-hint">Select or capture multiple pages, then process them all together.</p>
           <div className="drop-actions">
             <button className="btn" type="button" onClick={openLiveCamera}>
               Use camera
@@ -198,7 +364,7 @@ export default function Capture({
             accept="image/*,.pdf,application/pdf"
             hidden
             onChange={(e) => {
-              runFiles(e.target.files);
+              queueFiles(e.target.files);
               e.target.value = "";
             }}
           />
@@ -208,10 +374,16 @@ export default function Capture({
             accept="image/*"
             capture="environment"
             hidden
-            onChange={(e) => {
+            onChange={async (e) => {
               const files = Array.from(e.target.files || []);
-              files.forEach(addCameraPage);
               e.target.value = "";
+              if (!files.length) return;
+              if (autoProcessRef.current || scanPrompt) {
+                autoProcessRef.current = false;
+                await runFiles(files, { stayOnCapture: true });
+                return;
+              }
+              queueFiles(files);
             }}
           />
         </div>
@@ -222,19 +394,62 @@ export default function Capture({
           <div className="capture-queue-head">
             <h2>{pending.length} page{pending.length === 1 ? "" : "s"} ready</h2>
             <button className="btn" type="button" disabled={busy} onClick={uploadPending}>
-              Upload pages
+              Process pages
             </button>
           </div>
           <ul className="capture-thumbs">
             {pending.map((item, index) => (
               <li key={item.id}>
                 <img src={item.preview} alt={`Captured page ${index + 1}`} />
+                <span className="capture-thumb-label">Page {index + 1}</span>
                 <button type="button" className="btn ghost" disabled={busy} onClick={() => removePending(item.id)}>
                   Remove
                 </button>
               </li>
             ))}
           </ul>
+        </div>
+      )}
+
+      {lastResult && !busy && !(cameraOpen && liveStream) && (
+        <div className="capture-results">
+          <div className="capture-results-head">
+            <h2>Processed results</h2>
+            {!scanPrompt ? (
+              <button className="btn" type="button" onClick={finishCapture}>
+                Open inbox
+              </button>
+            ) : null}
+          </div>
+          <ul className="capture-result-list">
+            {lastResult.slips.map((slip) => (
+              <li key={slip.slipId}>
+                <div className="capture-result-title">
+                  {slip.ballotType || "Slip"}
+                  {slip.barcode ? ` · ${slip.barcode}` : ""}
+                </div>
+                <div className="capture-result-meta">
+                  Pages {slip.received.join(", ") || "—"} of {slip.expected}
+                  {slip.isComplete
+                    ? " · complete"
+                    : slip.missing.length
+                      ? ` · missing ${slip.missing.join(", ")}`
+                      : " · incomplete"}
+                </div>
+              </li>
+            ))}
+          </ul>
+          {lastResult.pages.length > 0 ? (
+            <ul className="capture-page-list">
+              {lastResult.pages.map((page) => (
+                <li key={page.page_id}>
+                  Page {page.page_number || "?"} of {page.page_total || "?"}
+                  {page.ballot_type ? ` · ${page.ballot_type}` : ""}
+                  {page.barcode_text ? ` · ${page.barcode_text}` : ""}
+                </li>
+              ))}
+            </ul>
+          ) : null}
         </div>
       )}
     </section>
