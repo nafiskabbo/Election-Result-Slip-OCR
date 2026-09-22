@@ -17,6 +17,7 @@ export default function Review({ slip, mobileTab = "photo", onReload, onInbox, n
   const [pageBusy, setPageBusy] = useState(false);
   const [process, setProcess] = useState(null);
   const replaceInputRef = useRef(null);
+  const retryReplaceFileRef = useRef(null);
   const active = draft || slip;
 
   useEffect(() => {
@@ -161,6 +162,7 @@ export default function Review({ slip, mobileTab = "photo", onReload, onInbox, n
 
   const replacePage = async (file) => {
     if (!file || !page) return;
+    retryReplaceFileRef.current = file;
     setPageBusy(true);
     setProcess(initialProcess(1));
     try {
@@ -170,6 +172,7 @@ export default function Review({ slip, mobileTab = "photo", onReload, onInbox, n
       const duration = data.total_elapsed_seconds != null
         ? ` · ${formatDuration(data.total_elapsed_seconds)}`
         : "";
+      retryReplaceFileRef.current = null;
       setEditOpen(false);
       notify(`Page image replaced${duration}`, "pass");
       setProcess(null);
@@ -494,7 +497,15 @@ export default function Review({ slip, mobileTab = "photo", onReload, onInbox, n
         )}
       >
         <p className="sub">Replace the photo if the capture is wrong, or remove it from this slip.</p>
-        {process ? <ProcessingProgress progress={process} /> : null}
+        {process ? (
+          <ProcessingProgress
+            progress={process}
+            onRetry={process.failed && retryReplaceFileRef.current
+              ? () => replacePage(retryReplaceFileRef.current)
+              : undefined}
+            onDismiss={process.failed ? () => setProcess(null) : undefined}
+          />
+        ) : null}
         <button
           type="button"
           className="btn"

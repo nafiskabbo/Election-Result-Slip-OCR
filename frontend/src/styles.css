@@ -839,6 +839,13 @@ table.data tr.national { box-shadow: inset 4px 0 0 var(--national); }
   transition: width 0.35s linear;
 }
 .process-board.fail .process-meter > span { background: var(--fail); }
+.process-actions {
+  display: flex;
+  flex-wrap: wrap;
+  justify-content: flex-end;
+  gap: 0.45rem;
+  margin-top: 0.85rem;
+}
 .process-copy {
   margin-bottom: 0.75rem;
 }

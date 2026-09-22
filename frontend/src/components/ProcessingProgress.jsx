@@ -46,7 +46,7 @@ export function progressFromEvent(event, previous) {
   };
 }
 
-export default function ProcessingProgress({ progress }) {
+export default function ProcessingProgress({ progress, onRetry, onDismiss }) {
   const [now, setNow] = useState(() => Date.now());
   const finished = Boolean(progress?.endedAt) || progress?.failed;
 
@@ -128,6 +128,21 @@ export default function ProcessingProgress({ progress }) {
           </dd>
         </div>
       </dl>
+
+      {progress.failed && (onRetry || onDismiss) ? (
+        <div className="process-actions">
+          {onDismiss ? (
+            <button type="button" className="btn ghost" onClick={onDismiss}>
+              Dismiss
+            </button>
+          ) : null}
+          {onRetry ? (
+            <button type="button" className="btn" onClick={onRetry}>
+              Retry
+            </button>
+          ) : null}
+        </div>
+      ) : null}
     </div>
   );
 }

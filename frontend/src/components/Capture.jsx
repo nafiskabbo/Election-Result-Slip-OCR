@@ -96,6 +96,8 @@ export default function Capture({
   const pushedCameraRef = useRef(false);
   const autoProcessRef = useRef(false);
   const promptQueueRef = useRef([]);
+  const retryFilesRef = useRef(null);
+  const retryOptionsRef = useRef({ stayOnCapture: true });
 
   useEffect(() => () => {
     pendingRef.current.forEach((item) => URL.revokeObjectURL(item.preview));
@@ -145,6 +147,7 @@ export default function Capture({
   const finishCapture = async () => {
     setScanPrompt(null);
     promptQueueRef.current = [];
+    retryFilesRef.current = null;
     setLastResult(null);
     setProcess(null);
     await onDone();
@@ -176,6 +179,8 @@ export default function Capture({
   const runFiles = async (fileList, { stayOnCapture = false } = {}) => {
     const files = Array.from(fileList || []);
     if (!files.length) return null;
+    retryFilesRef.current = files;
+    retryOptionsRef.current = { stayOnCapture };
     setBusy(true);
     setProcess(initialProcess(files.length));
     setScanPrompt(null);
@@ -183,6 +188,7 @@ export default function Capture({
       const data = await api.upload(files, {
         onProgress: (event) => setProcess((prev) => progressFromEvent(event, prev)),
       });
+      retryFilesRef.current = null;
       const summary = handleUploadResult(data);
       if (!summary.nextPrompts.length && !stayOnCapture) {
         await new Promise((resolve) => window.setTimeout(resolve, 900));
@@ -202,6 +208,17 @@ export default function Capture({
     } finally {
       setBusy(false);
     }
+  };
+
+  const retryUpload = () => {
+    const files = retryFilesRef.current;
+    if (!files?.length || busy) return;
+    runFiles(files, retryOptionsRef.current);
+  };
+
+  const dismissFailedProcess = () => {
+    setProcess(null);
+    setScanPrompt(promptQueueRef.current[0] || null);
   };
 
   const queueFiles = (fileList, { message } = {}) => {
@@ -296,9 +313,15 @@ export default function Capture({
         </header>
       )}
 
-      {process && !(cameraOpen && liveStream) ? <ProcessingProgress progress={process} /> : null}
+      {process && !(cameraOpen && liveStream) ? (
+        <ProcessingProgress
+          progress={process}
+          onRetry={process.failed ? retryUpload : undefined}
+          onDismiss={process.failed ? dismissFailedProcess : undefined}
+        />
+      ) : null}
 
-      {scanPrompt && !busy && !(cameraOpen && liveStream) && (
+      {scanPrompt && !busy && !process?.failed && !(cameraOpen && liveStream) && (
         <div className="modal-back" role="dialog" aria-modal="true" aria-labelledby="scan-next-title">
           <div className="modal scan-next-modal" onClick={(e) => e.stopPropagation()}>
             <h3 id="scan-next-title">Scan the next page</h3>
