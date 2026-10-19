@@ -291,6 +291,78 @@ def _ink_bbox_cell(cell: np.ndarray) -> Optional[np.ndarray]:
     return cv2.cvtColor(cropped, cv2.COLOR_GRAY2BGR)
 
 
+def _handwriting_crop(cell: np.ndarray) -> Optional[np.ndarray]:
+    """Tight crop around interior ink, ignoring table borders."""
+    if cell is None or cell.size == 0:
+        return None
+    gray = cv2.cvtColor(cell, cv2.COLOR_BGR2GRAY) if len(cell.shape) == 3 else cell
+    h, w = gray.shape[:2]
+    if min(h, w) < 8:
+        return None
+    _, bw = cv2.threshold(gray, 0, 255, cv2.THRESH_BINARY_INV + cv2.THRESH_OTSU)
+    horiz = cv2.morphologyEx(
+        bw, cv2.MORPH_OPEN, cv2.getStructuringElement(cv2.MORPH_RECT, (max(40, int(w * 0.55)), 1))
+    )
+    vert = cv2.morphologyEx(
+        bw, cv2.MORPH_OPEN, cv2.getStructuringElement(cv2.MORPH_RECT, (1, max(16, int(h * 0.7))))
+    )
+    cleaned = cv2.subtract(bw, cv2.max(horiz, vert))
+    cleaned[:2, :] = 0
+    cleaned[-2:, :] = 0
+    cleaned[:, :2] = 0
+    cleaned[:, -2:] = 0
+    num, _labels, stats, _ = cv2.connectedComponentsWithStats(cleaned)
+    comps = []
+    for i in range(1, num):
+        x, y, ww, hh, area = stats[i]
+        if area < 12 or hh < 6 or ww < 3:
+            continue
+        if x <= 2 or x + ww >= w - 2:
+            continue
+        comps.append((x, y, ww, hh))
+    if not comps:
+        return None
+    x1 = max(0, min(c[0] for c in comps) - 3)
+    x2 = min(w, max(c[0] + c[2] for c in comps) + 3)
+    y1 = max(0, min(c[1] for c in comps) - 3)
+    y2 = min(h, max(c[1] + c[3] for c in comps) + 3)
+    cropped = cell[y1:y2, x1:x2]
+    if cropped.size == 0 or min(cropped.shape[:2]) < 8:
+        return None
+    return cropped
+
+
+def expected_open_digits(cell: np.ndarray) -> int:
+    """How many handwritten digits fit the ink bbox (1–4). 0 if unknown."""
+    inner = _handwriting_crop(cell)
+    if inner is None:
+        return 0
+    h, w = inner.shape[:2]
+    ratio = w / float(max(h, 1))
+    if ratio < 1.15:
+        return 1
+    if ratio < 2.28:
+        return 2
+    if ratio < 3.40:
+        return 3
+    return 4
+
+
+def fit_vote_to_digit_count(value: int, digit_count: int) -> int:
+    """Drop a duplicated loop-zero: 600 with 2-digit ink → 60; keep 100 with 3-digit ink."""
+    value = int(value)
+    if digit_count <= 0 or value < 0:
+        return value
+    digits = str(value)
+    if len(digits) == digit_count:
+        return value
+    if len(digits) == digit_count + 1 and digits.endswith("0"):
+        return 0 if digit_count == 1 else int(digits[:digit_count])
+    if len(digits) > digit_count:
+        return int(digits[-digit_count:])
+    return value
+
+
 def _cnn_open_digits(cell: np.ndarray) -> Tuple[Optional[int], float]:
     """Last-resort digit CNN on ink blobs in an open cell (not 4-box RESULT)."""
     try:
@@ -362,6 +434,7 @@ def read_open_vote_cell(
         return 0, 0.62
     candidates: List[Tuple[int, float]] = []
     bgr = _as_bgr(cell)
+    digit_count = expected_open_digits(bgr)
     boxes, lines = engine._ocr_region(bgr, 0, 0, bgr.shape[0], bgr.shape[1], upscale_to=220)
     texts = [str(item.get("text") or "") for item in boxes] or list(lines or [])
     for text in texts:
@@ -397,6 +470,9 @@ def read_open_vote_cell(
     if not candidates:
         return 0, 0.42 if ink >= 0.02 else 0.58
     votes, score = max(candidates, key=lambda item: (len(str(item[0])), item[1], item[0]))
+    votes = fit_vote_to_digit_count(int(votes), digit_count)
+    if votes <= 0 or votes > max_value:
+        return 0, 0.42 if ink >= 0.02 else 0.58
     conf = 0.55 + min(0.35, ink * 2.5)
     return int(votes), float(min(0.93, max(conf, score)))
 
@@ -414,8 +490,10 @@ def _choose_vote(item_votes: Optional[int], crop_votes: Optional[int]) -> int:
     s_item, s_crop = str(item), str(crop)
     if s_crop == s_item:
         return item
-    # Missed leading digit: 8 → 98. Do not accept 7 → 707.
+    # Missed leading digit: 8 → 98. Do not accept 60 → 600 or 7 → 707.
     if len(s_crop) == len(s_item) + 1 and s_crop.endswith(s_item):
+        if s_crop[0] == "0" or (len(s_item) >= 2 and s_crop.endswith("0") and s_item.endswith("0")):
+            return item
         return crop
     # Crop dropped a trailing digit: keep 67 over 6.
     if len(s_item) > len(s_crop) and s_item.endswith(s_crop):

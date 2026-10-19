@@ -5,6 +5,7 @@ from backend.lg2026_forms import (
     FAMILY_IEC_2024,
     FAMILY_LG_2026,
     classify_result_form,
+    fit_vote_to_digit_count,
     parse_open_votes,
     _choose_vote,
     _reconcile_totals,
@@ -84,6 +85,18 @@ def test_choose_vote_completes_missing_leading_digit():
     assert _choose_vote(None, 99) == 99
     assert _choose_vote(7, 707) == 7
     assert _choose_vote(0, 7001) == 0
+    assert _choose_vote(60, 600) == 60
+    assert _choose_vote(0, 60) == 60
+
+
+def test_fit_vote_drops_duplicated_loop_zero():
+    assert fit_vote_to_digit_count(600, 2) == 60
+    assert fit_vote_to_digit_count(100, 3) == 100
+    assert fit_vote_to_digit_count(250, 3) == 250
+    assert fit_vote_to_digit_count(98, 2) == 98
+    assert fit_vote_to_digit_count(10, 1) == 0
+    assert fit_vote_to_digit_count(7, 1) == 7
+    assert fit_vote_to_digit_count(160, 3) == 160
 
 
 def test_reconcile_totals_uses_printed_identity():
