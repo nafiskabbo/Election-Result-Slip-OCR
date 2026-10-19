@@ -50,6 +50,7 @@ def extract_page_from_file(
         digit_backend=digit_backend,
         also_cnn_votes=also_cnn_votes,
         debug_dir=debug_dir,
+        source_img=cv_img,
     )
     return enh_res, extracted
 

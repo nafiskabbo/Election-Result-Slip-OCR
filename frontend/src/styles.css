@@ -11,6 +11,9 @@
   --provincial: #9a3f6e;
   --regional: #c05621;
   --national: #1e5a8a;
+  --district-council-pr: #c9a227;
+  --ward: #3f4a52;
+  --local-council-pr: #2d6a4f;
   --pass: #006b3f;
   --fail: #851a1b;
   --warn: #c47a12;
@@ -424,6 +427,9 @@ table.data td.num, table.data th.num {
 table.data tr.provincial { box-shadow: inset 4px 0 0 var(--provincial); }
 table.data tr.regional { box-shadow: inset 4px 0 0 var(--regional); }
 table.data tr.national { box-shadow: inset 4px 0 0 var(--national); }
+table.data tr.district-council-pr { box-shadow: inset 4px 0 0 var(--district-council-pr); }
+table.data tr.ward { box-shadow: inset 4px 0 0 var(--ward); }
+table.data tr.local-council-pr { box-shadow: inset 4px 0 0 var(--local-council-pr); }
 .row-actions { display: flex; gap: 0.35rem; justify-content: flex-end; }
 .ref-link {
   display: inline;
@@ -476,6 +482,9 @@ table.data tr.national { box-shadow: inset 4px 0 0 var(--national); }
 .slip-card.provincial { box-shadow: inset 4px 0 0 var(--provincial); }
 .slip-card.regional { box-shadow: inset 4px 0 0 var(--regional); }
 .slip-card.national { box-shadow: inset 4px 0 0 var(--national); }
+.slip-card.district-council-pr { box-shadow: inset 4px 0 0 var(--district-council-pr); }
+.slip-card.ward { box-shadow: inset 4px 0 0 var(--ward); }
+.slip-card.local-council-pr { box-shadow: inset 4px 0 0 var(--local-council-pr); }
 .slip-card-main {
   flex: 1;
   min-width: 0;
@@ -519,6 +528,9 @@ table.data tr.national { box-shadow: inset 4px 0 0 var(--national); }
 .chip.provincial { color: var(--provincial); }
 .chip.regional { color: var(--regional); }
 .chip.national { color: var(--national); }
+.chip.district-council-pr { color: var(--district-council-pr); }
+.chip.ward { color: var(--ward); }
+.chip.local-council-pr { color: var(--local-council-pr); }
 .chip.approved { color: var(--pass); }
 .chip.pending_review { color: var(--warn); }
 .chip.incomplete, .chip.rejected { color: var(--fail); }
@@ -881,6 +893,9 @@ table.data tr.national { box-shadow: inset 4px 0 0 var(--national); }
 .workspace.provincial { border-top: 6px solid var(--provincial); }
 .workspace.regional { border-top: 6px solid var(--regional); }
 .workspace.national { border-top: 6px solid var(--national); }
+.workspace.district-council-pr { border-top: 6px solid var(--district-council-pr); }
+.workspace.ward { border-top: 6px solid var(--ward); }
+.workspace.local-council-pr { border-top: 6px solid var(--local-council-pr); }
 
 .viewer-pane, .form-pane { min-width: 0; }
 .form-pane { border-left: 1px solid var(--rule); display: flex; flex-direction: column; }

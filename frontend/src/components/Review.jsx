@@ -1,5 +1,5 @@
 import { useEffect, useMemo, useRef, useState } from "react";
-import { api, apiUrl, fileUrl, statusLabel } from "../api.js";
+import { api, apiUrl, ballotClass, fileUrl, statusLabel } from "../api.js";
 import { formatDuration, formatExactTime, processingWindow } from "../time.js";
 import Viewer from "./Viewer.jsx";
 import Prompt from "./Prompt.jsx";
@@ -232,7 +232,7 @@ export default function Review({ slip, mobileTab = "photo", onReload, onInbox, n
             <b>{active.registered_voters}</b>
           </div>
         ) : null}
-        <span className={`chip ${(active.ballot_type || "").toLowerCase()}`}>{active.ballot_type}</span>
+        <span className={`chip ${ballotClass(active.ballot_type)}`}>{active.ballot_type}</span>
         {" "}
         <span className={`chip ${active.status}`}>{statusLabel(active.status)}</span>
         <h2>{active.station_name || (voteRelated ? "Station unread" : "No voting content")}</h2>
@@ -391,7 +391,7 @@ export default function Review({ slip, mobileTab = "photo", onReload, onInbox, n
         <button type="button" className="btn ghost" onClick={onInbox}>Back to inbox</button>
       </header>
 
-      <div className={`workspace ${(active.ballot_type || "").toLowerCase()}`}>
+      <div className={`workspace ${ballotClass(active.ballot_type)}`}>
         <div className={`review-photo-pane ${mobileTab === "photo" ? "mobile-show" : "mobile-hide"}`}>
           <Viewer
             src={fileUrl(page?.enhanced_file_path)}

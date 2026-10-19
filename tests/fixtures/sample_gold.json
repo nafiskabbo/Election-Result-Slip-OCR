@@ -361,5 +361,110 @@
       "IFP": [null, null, null, null],
       "COPE": [null, null, null, null]
     }
+  },
+  "WhatsApp Image 2026-10-16 at 13.06.01.jpeg": {
+    "template": "lg2026",
+    "barcode_text": "011965439600246012",
+    "ballot_type": "District Council PR",
+    "page_number": 1,
+    "page_total": 2,
+    "voting_district": "43960024",
+    "province": "KwaZulu-Natal",
+    "municipality": "DC22",
+    "registered_voters": 1430,
+    "votes": {
+      "AAB": 250,
+      "AAC": 17,
+      "AAE": 420,
+      "AAF": 5,
+      "AAG": 75,
+      "AAH": 20,
+      "AAI": 18,
+      "AAN": 99,
+      "AAV": 67,
+      "AAW": 82
+    }
+  },
+  "WhatsApp Image 2026-10-16 at 13.06.01 (1).jpeg": {
+    "template": "lg2026",
+    "barcode_text": "011965439600246022",
+    "ballot_type": "District Council PR",
+    "page_number": 2,
+    "page_total": 2,
+    "voting_district": "43960024",
+    "officer": "PLESSIS",
+    "votes": {
+      "ABE": 71,
+      "ABZ": 28,
+      "ACJ": 92,
+      "AEW": 7,
+      "AFI": 16,
+      "AGC": 47,
+      "AHB": 9,
+      "ALH": 12
+    },
+    "totals": {"valid": 1335, "spoilt": 60, "cast": 1395}
+  },
+  "WhatsApp Image 2026-10-16 at 13.06.01 (2).jpeg": {
+    "template": "lg2026",
+    "barcode_text": "011965439600244012",
+    "ballot_type": "Ward",
+    "page_number": 1,
+    "page_total": 2,
+    "voting_district": "43960024",
+    "municipality": "KZN227",
+    "registered_voters": 1430,
+    "votes": {
+      "TRAAN": 25,
+      "TRAGJ": 100,
+      "TRABZ": 75,
+      "TRAAF": 98,
+      "TRAFI": 160,
+      "TRAHB": 22,
+      "TRAAE": 71,
+      "TRAAB": 80
+    }
+  },
+  "WhatsApp Image 2026-10-16 at 13.06.01 (3).jpeg": {
+    "template": "lg2026",
+    "barcode_text": "011965439600244022",
+    "ballot_type": "Ward",
+    "page_number": 2,
+    "page_total": 2,
+    "voting_district": "43960024",
+    "officer": "PLESSIS",
+    "votes": {"TRACD": 100},
+    "totals": {"valid": 631, "spoilt": 100, "cast": 731}
+  },
+  "WhatsApp Image 2026-10-16 at 13.06.01 (4).jpeg": {
+    "template": "lg2026",
+    "barcode_text": "011965439600243012",
+    "ballot_type": "Local Council PR",
+    "page_number": 1,
+    "page_total": 2,
+    "voting_district": "43960024",
+    "municipality": "KZN227",
+    "registered_voters": 1430,
+    "votes": {
+      "AAB": 25,
+      "AAE": 30,
+      "AAF": 98,
+      "AAN": 100,
+      "ABZ": 22,
+      "ACD": 15,
+      "AFI": 60,
+      "AGJ": 0
+    }
+  },
+  "WhatsApp Image 2026-10-16 at 13.06.01 (5).jpeg": {
+    "template": "lg2026",
+    "barcode_text": "011965439600243022",
+    "ballot_type": "Local Council PR",
+    "page_number": 2,
+    "page_total": 2,
+    "voting_district": "43960024",
+    "officer": "PLESSIS",
+    "votes": {"AHB": 55},
+    "totals": {"valid": 405, "spoilt": 100, "cast": 505, "special": 60, "s24a": 3}
   }
 }

@@ -1,5 +1,12 @@
 const API_BASE = (import.meta.env.VITE_API_URL || "").replace(/\/$/, "");
 
+export function ballotClass(type) {
+  return String(type || "")
+    .toLowerCase()
+    .replace(/[^a-z0-9]+/g, "-")
+    .replace(/^-|-$/g, "");
+}
+
 export function apiUrl(path = "") {
   if (!path) return API_BASE;
   if (path.startsWith("http://") || path.startsWith("https://")) return path;

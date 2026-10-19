@@ -73,23 +73,22 @@ def parse_file_list(raw: Optional[str]) -> Optional[List[str]]:
     return names or None
 
 
-def clean_runtime_storage() -> None:
-    """Remove previous uploads and debug dumps so a new run is easy to inspect."""
-    for sub in ("raw", "enhanced", "thumbnails", "debug"):
-        folder = STORAGE_DIR / sub
-        if not folder.exists():
+def clean_debug_dumps() -> None:
+    """Remove previous accuracy debug dumps only.
+
+    Captured desk files in storage/raw, enhanced, and thumbnails are left
+    untouched, and the database is never truncated.
+    """
+    folder = STORAGE_DIR / "debug"
+    if not folder.exists():
+        return
+    for path in folder.iterdir():
+        if path.name == ".gitkeep":
             continue
-        for path in folder.iterdir():
-            if path.name == ".gitkeep":
-                continue
-            if path.is_dir():
-                shutil.rmtree(path)
-            else:
-                path.unlink()
-    for report in STORAGE_DIR.glob("accuracy_*.md"):
-        report.unlink()
-    for report in STORAGE_DIR.glob("accuracy_*.txt"):
-        report.unlink()
+        if path.is_dir():
+            shutil.rmtree(path)
+        else:
+            path.unlink()
 
 
 def load_gold(path: Path) -> Dict[str, Dict[str, Any]]:
@@ -300,6 +299,7 @@ def score_folder(
         })
 
     return {
+        "folder": str(folder),
         "images": len(images),
         "labeled": sum(1 for page in pages if not page.get("unlabeled")),
         "unlabeled": sum(1 for page in pages if page.get("unlabeled")),
@@ -363,7 +363,7 @@ def print_report(result: Dict[str, Any], use_known: bool) -> None:
     model = result.get("rapidocr_model") or "small"
     print(f"Sample-slip accuracy check — {_desk_path_label(use_known)}")
     print(f"RapidOCR PP-OCRv6 model: {model}")
-    print(f"Folder: {SAMPLE_DIR}")
+    print(f"Folder: {result.get('folder') or SAMPLE_DIR}")
     print(f"Images: {result['images']}  labeled: {result['labeled']}  unlabeled: {result['unlabeled']}")
     print()
     for page in result["pages"]:
@@ -485,7 +485,7 @@ def format_report_text(result: Dict[str, Any], use_known: bool) -> str:
     lines.append("Sample-slip accuracy report")
     lines.append(f"Generated (UTC): {datetime.now(timezone.utc).strftime('%Y-%m-%d %H:%M:%S')}")
     lines.append(f"Path: {_desk_path_label(use_known)}")
-    lines.append(f"Folder: {SAMPLE_DIR}")
+    lines.append(f"Folder: {result.get('folder') or SAMPLE_DIR}")
     lines.append(f"Gold: {GOLD_PATH}")
     lines.append("")
     lines.append("=== SUMMARY ===")
@@ -601,7 +601,7 @@ def format_report_markdown(result: Dict[str, Any], use_known: bool) -> str:
     lines.append(f"- **Generated (UTC):** {datetime.now(timezone.utc).strftime('%Y-%m-%d %H:%M:%S')}")
     lines.append(f"- **Path:** {_desk_path_label(use_known)}")
     lines.append(f"- **RapidOCR:** PP-OCRv6 **{result.get('rapidocr_model') or 'small'}** (det+rec)")
-    lines.append(f"- **Folder:** `{SAMPLE_DIR}`")
+    lines.append(f"- **Folder:** `{result.get('folder') or SAMPLE_DIR}`")
     lines.append(f"- **Gold:** `{GOLD_PATH}`")
     lines.append(
         f"- **Digit CNN model:** `{active_model_name() or 'none'}` "
@@ -836,7 +836,7 @@ def format_vote_path_compare_markdown(
     lines.append(f"- **Generated (UTC):** {datetime.now(timezone.utc).strftime('%Y-%m-%d %H:%M:%S')}")
     lines.append(f"- **Path:** {_desk_path_label(use_known)}")
     lines.append(f"- **RapidOCR:** PP-OCRv6 **{hybrid.get('rapidocr_model') or 'small'}**")
-    lines.append(f"- **Folder:** `{SAMPLE_DIR}`")
+    lines.append(f"- **Folder:** `{result.get('folder') or SAMPLE_DIR}`")
     lines.append(f"- **Gold:** `{GOLD_PATH}`")
     lines.append(
         "- **Hybrid:** heuristic ICR + digit-tuned RapidOCR RESULT-box fusion "
@@ -1004,7 +1004,7 @@ def format_model_compare_markdown(
     lines.append("")
     lines.append(f"- **Generated (UTC):** {datetime.now(timezone.utc).strftime('%Y-%m-%d %H:%M:%S')}")
     lines.append(f"- **Path:** {_desk_path_label(use_known)}")
-    lines.append(f"- **Folder:** `{SAMPLE_DIR}`")
+    lines.append(f"- **Folder:** `{result.get('folder') or SAMPLE_DIR}`")
     lines.append(f"- **Gold:** `{GOLD_PATH}`")
     lines.append("- **Digit CNN:** not used")
     lines.append("")
@@ -1351,33 +1351,35 @@ def main(argv: Optional[List[str]] = None) -> int:
         "--debug",
         action="store_true",
         help=(
-            "Wipe previous storage dumps and write processed images under "
-            "storage/debug/<filename>/ (01_loaded … 07_result_grid + cells)."
+            "Write processed images under storage/debug/<filename>/ "
+            "(01_loaded … 07_result_grid + cells). Does not wipe captured "
+            "uploads or database rows."
         ),
+    )
+    parser.add_argument(
+        "--folder",
+        type=Path,
+        default=None,
+        help="Image folder to score (default: sample_slips/). Does not write to the database.",
     )
     args = parser.parse_args(argv)
 
     file_names = parse_file_list(args.files)
     debug_root: Optional[Path] = None
     if args.debug:
-        clean_runtime_storage()
-        try:
-            from backend.database import truncate_operational_tables
-
-            truncate_operational_tables()
-        except Exception as exc:
-            print(f"Desk slip rows not cleared: {exc}")
+        clean_debug_dumps()
         debug_root = STORAGE_DIR / "debug"
         debug_root.mkdir(parents=True, exist_ok=True)
         print(f"Debug images: {debug_root}")
+    scan_folder = (args.folder or SAMPLE_DIR).resolve()
 
-    if not SAMPLE_DIR.exists():
-        print(f"No sample folder at {SAMPLE_DIR}", file=sys.stderr)
+    if not scan_folder.exists():
+        print(f"No sample folder at {scan_folder}", file=sys.stderr)
         return 1
-    images = list_sample_images(SAMPLE_DIR, file_names)
+    images = list_sample_images(scan_folder, file_names)
     if not images:
         wanted = ", ".join(file_names or [])
-        print(f"No photos found in {SAMPLE_DIR}" + (f" matching {wanted}" if wanted else ""), file=sys.stderr)
+        print(f"No photos found in {scan_folder}" + (f" matching {wanted}" if wanted else ""), file=sys.stderr)
         return 1
 
     gold = load_gold(GOLD_PATH)
@@ -1401,7 +1403,7 @@ def main(argv: Optional[List[str]] = None) -> int:
         model = args.rapidocr_model if args.rapidocr_model != "both" else "small"
         print("=== Hybrid: RapidOCR + custom ICR ===")
         hybrid = score_folder(
-            SAMPLE_DIR,
+            scan_folder,
             gold,
             use_known=False,
             compare_digit_cnn=False,
@@ -1413,7 +1415,7 @@ def main(argv: Optional[List[str]] = None) -> int:
         print_report(hybrid, use_known=False)
         print("\n=== RapidOCR only (no ICR) ===")
         rapid_only = score_folder(
-            SAMPLE_DIR,
+            scan_folder,
             gold,
             use_known=False,
             compare_digit_cnn=False,
@@ -1453,7 +1455,7 @@ def main(argv: Optional[List[str]] = None) -> int:
     elif args.rapidocr_model == "both":
         print("=== RapidOCR PP-OCRv6 SMALL ===")
         small = score_folder(
-            SAMPLE_DIR,
+            scan_folder,
             gold,
             use_known=use_known,
             compare_digit_cnn=False,
@@ -1464,7 +1466,7 @@ def main(argv: Optional[List[str]] = None) -> int:
         print_report(small, use_known=use_known)
         print("\n=== RapidOCR PP-OCRv6 MEDIUM ===")
         medium = score_folder(
-            SAMPLE_DIR,
+            scan_folder,
             gold,
             use_known=use_known,
             compare_digit_cnn=False,
@@ -1486,7 +1488,7 @@ def main(argv: Optional[List[str]] = None) -> int:
         result = medium
     else:
         result = score_folder(
-            SAMPLE_DIR,
+            scan_folder,
             gold,
             use_known=use_known,
             compare_digit_cnn=compare_cnn,

@@ -1,5 +1,5 @@
 import { useEffect, useRef, useState } from "react";
-import { api, apiUrl, statusLabel } from "../api.js";
+import { api, apiUrl, ballotClass, statusLabel } from "../api.js";
 import { processingWindow } from "../time.js";
 import { Icon } from "./Icons.jsx";
 import Sheet from "./Sheet.jsx";
@@ -120,6 +120,9 @@ export default function Inbox({
           <option value="Provincial">Provincial</option>
           <option value="Regional">Regional</option>
           <option value="National">National</option>
+          <option value="District Council PR">District Council PR</option>
+          <option value="Ward">Ward</option>
+          <option value="Local Council PR">Local Council PR</option>
         </select>
         <select
           value={status}
@@ -183,7 +186,7 @@ export default function Inbox({
               const complete = slip.total_received_pages >= slip.total_expected_pages;
               const times = processingWindow(slip);
               return (
-                <tr key={slip.id} className={(slip.ballot_type || "").toLowerCase()}>
+                <tr key={slip.id} className={ballotClass(slip.ballot_type)}>
                   <td>
                     <button
                       type="button"
@@ -199,7 +202,7 @@ export default function Inbox({
                     )}
                   </td>
                   <td>
-                    <span className={`chip ${(slip.ballot_type || "").toLowerCase()}`}>{slip.ballot_type}</span>
+                    <span className={`chip ${ballotClass(slip.ballot_type)}`}>{slip.ballot_type}</span>
                   </td>
                   <td>
                     <div>{slip.station_name || (slip.is_vote_related === false ? "No voting content" : "Station unread")}</div>
@@ -252,7 +255,7 @@ export default function Inbox({
           return (
             <div
               key={slip.id}
-              className={`slip-card ${(slip.ballot_type || "").toLowerCase()}`}
+              className={`slip-card ${ballotClass(slip.ballot_type)}`}
             >
               <button
                 type="button"
@@ -264,7 +267,7 @@ export default function Inbox({
                   <span className={`chip ${slip.status}`}>{statusLabel(slip.status)}</span>
                 </div>
                 <div className="slip-card-meta">
-                  <span className={`chip ${(slip.ballot_type || "").toLowerCase()}`}>{slip.ballot_type}</span>
+                  <span className={`chip ${ballotClass(slip.ballot_type)}`}>{slip.ballot_type}</span>
                   <span className={`chip ${complete ? "approved" : "incomplete"}`}>
                     {slip.total_received_pages}/{slip.total_expected_pages}
                   </span>
@@ -315,6 +318,9 @@ export default function Inbox({
             <option value="Provincial">Provincial</option>
             <option value="Regional">Regional</option>
             <option value="National">National</option>
+            <option value="District Council PR">District Council PR</option>
+            <option value="Ward">Ward</option>
+            <option value="Local Council PR">Local Council PR</option>
           </select>
         </label>
         <label className="sheet-field">

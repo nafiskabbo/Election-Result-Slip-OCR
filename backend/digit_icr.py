@@ -109,19 +109,12 @@ def detect_projection_result_column_bounds(
     return int(w * 0.605), int(w * 0.775)
 
 
-def detect_result_column_geometry(
+def _matched_four_box_result_geometry(
     gray: np.ndarray,
     y1: int,
     y2: int,
-) -> ResultColumnGeometry:
-    """Locate the five-line RESULT grid and model its possibly sloped edges.
-
-    A valid IEC RESULT column has two outer rules and three near-equidistant
-    dashed dividers. The large signature column immediately to its right
-    distinguishes it from the similarly sized party-logo column.
-
-    Returns ``(left_x, left_dx_dy, right_x, right_dx_dy, y_reference)``.
-    """
+) -> Optional[ResultColumnGeometry]:
+    """Return the five-line IEC RESULT grid, or None when only a fallback crop exists."""
     h, w = gray.shape[:2]
     y1 = max(0, min(h - 1, y1))
     y2 = max(y1 + 1, min(h, y2))
@@ -231,18 +224,45 @@ def detect_result_column_geometry(
         )
         candidates.append((score, indexes))
 
-    if candidates:
-        _, best_indexes = max(candidates, key=lambda item: item[0])
-        left_cluster = clusters[best_indexes[0]]
-        right_cluster = clusters[best_indexes[-1]]
-        left_x = centers[best_indexes[0]]
-        right_x = centers[best_indexes[-1]]
-        left_slope = float(np.median([item[1] for item in left_cluster]))
-        right_slope = float(np.median([item[1] for item in right_cluster]))
-        return left_x, left_slope, right_x, right_slope, y_ref
+    if not candidates:
+        return None
+    _, best_indexes = max(candidates, key=lambda item: item[0])
+    left_cluster = clusters[best_indexes[0]]
+    right_cluster = clusters[best_indexes[-1]]
+    left_x = centers[best_indexes[0]]
+    right_x = centers[best_indexes[-1]]
+    left_slope = float(np.median([item[1] for item in left_cluster]))
+    right_slope = float(np.median([item[1] for item in right_cluster]))
+    return left_x, left_slope, right_x, right_slope, y_ref
 
+
+def detect_result_column_geometry(
+    gray: np.ndarray,
+    y1: int,
+    y2: int,
+) -> ResultColumnGeometry:
+    """Locate the five-line RESULT grid and model its possibly sloped edges.
+
+    A valid IEC RESULT column has two outer rules and three near-equidistant
+    dashed dividers. The large signature column immediately to its right
+    distinguishes it from the similarly sized party-logo column.
+
+    Returns ``(left_x, left_dx_dy, right_x, right_dx_dy, y_reference)``.
+    """
+    matched = _matched_four_box_result_geometry(gray, y1, y2)
+    if matched is not None:
+        return matched
+    h, w = gray.shape[:2]
+    y1 = max(0, min(h - 1, y1))
+    y2 = max(y1 + 1, min(h, y2))
+    y_ref = y1 + (y2 - y1 - 1) / 2.0
     left, right = detect_projection_result_column_bounds(gray, y1, y2)
     return float(left), 0.0, float(right), 0.0, y_ref
+
+
+def four_box_result_grid_found(gray: np.ndarray, y1: int, y2: int) -> bool:
+    """True when the five-line IEC RESULT grid is present (not a fallback crop)."""
+    return _matched_four_box_result_geometry(gray, y1, y2) is not None
 
 
 def result_column_bounds_at(

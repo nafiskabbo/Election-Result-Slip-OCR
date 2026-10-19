@@ -41,9 +41,10 @@ From Docker on the VPS:
 
 ```bash
 ./scripts/vps-ballot.sh backup
+./scripts/vps-ballot.sh pull-backup
 ```
 
-Files land in `/etc/komodo/stacks/ballot-ocr/backups/`. Copy image files from the `ballot-ocr-data` volume separately if you need a full restore of photographs.
+Each run writes `/etc/komodo/stacks/ballot-ocr/backups/<stamp>/` with `ballot.sql`, `ballot.dump`, `storage.tar.gz` (raw/enhanced/thumbnails/debug), fingerprints, and SHA256SUMS. `pull-backup` copies that folder to local `backups/`. Deploy takes a backup first and never runs `docker compose down -v`.
 
 ## Restore
 

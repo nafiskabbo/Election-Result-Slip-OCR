@@ -1,13 +1,16 @@
 import json
+import os
 from datetime import datetime
 from pathlib import Path
 from typing import Any, Iterable, Optional, Sequence
+from urllib.parse import urlparse
 
 from psycopg import ClientCursor
 from psycopg.types.json import Jsonb
 from psycopg_pool import ConnectionPool
 
-from backend.config import DATABASE_URL, SCHEMA_DIR
+from backend import config as backend_config
+from backend.config import SCHEMA_DIR
 
 _pool: Optional[ConnectionPool] = None
 
@@ -114,7 +117,7 @@ def get_pool() -> ConnectionPool:
     global _pool
     if _pool is None or _pool.closed:
         _pool = ConnectionPool(
-            conninfo=DATABASE_URL,
+                conninfo=backend_config.DATABASE_URL,
             min_size=1,
             max_size=10,
             open=True,
@@ -148,7 +151,26 @@ def init_db():
         conn.commit()
 
 
+def _database_name() -> str:
+    return (urlparse(backend_config.DATABASE_URL).path or "").lstrip("/").split("?")[0]
+
+
 def truncate_operational_tables():
+    """Wipe slip rows. Tests only — never the desk or production database.
+
+    Requires ``BALLOT_ALLOW_TRUNCATE=1`` and a database named ``ballot_test``
+    unless ``BALLOT_ALLOW_TRUNCATE_MAIN=1`` is also set.
+    """
+    if os.environ.get("BALLOT_ALLOW_TRUNCATE") != "1":
+        raise RuntimeError(
+            "Refusing to truncate captured slips. Pytest sets "
+            "BALLOT_ALLOW_TRUNCATE=1 against an isolated ballot_test database."
+        )
+    name = _database_name()
+    if name != "ballot_test" and os.environ.get("BALLOT_ALLOW_TRUNCATE_MAIN") != "1":
+        raise RuntimeError(
+            f"Refusing to truncate database {name!r}. Tests must use ballot_test."
+        )
     conn = get_db_connection()
     try:
         cursor = conn.cursor()

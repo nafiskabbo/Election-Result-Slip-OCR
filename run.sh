@@ -173,6 +173,7 @@ Examples:
   ./run.sh accuracy --raw-ocr --compare-vote-path
   ./run.sh accuracy --raw-ocr --compare-digit-cnn
   ./run.sh accuracy --fail-under 95
+  ./run.sh accuracy --folder sample_slips/final_templates
   ./run.sh accuracy --debug --files ResultSlip.jpg,Result_Slip_2024_Previous_Election_Sample.jpg,Result_Slip_2024_Previous_Election_Sample_lower.jpg
   ./run.sh accuracy --compare-cnn-models --files ResultSlip.jpg,Result_Slip_2024_Previous_Election_Sample.jpg,Result_Slip_2024_Previous_Election_Sample_lower.jpg
   ./run.sh digit-export

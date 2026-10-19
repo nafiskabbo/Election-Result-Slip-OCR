@@ -68,6 +68,13 @@ VOTE_PAGE_HINTS = (
     "PROVINCIAL BALLOT",
     "REGIONAL BALLOT",
     "ELECTORAL COMMISSION",
+    "DISTRICT COUNCIL PR",
+    "WARD CANDIDATE",
+    "LOCAL COUNCIL PR",
+    "YELLOW BALLOT",
+    "GREEN BALLOT",
+    "WHITE BALLOT",
+    "IEC TEST PARTY",
 )
 
 
@@ -388,7 +395,12 @@ class OCREngine:
             self._box_rapid_ocr = build_box_rapid_ocr(self.rapidocr_model)
         return self._box_rapid_ocr
 
-    def parse_barcode_reference(self, text: str, header_vd: Optional[str] = None) -> Optional[Dict[str, Any]]:
+    def parse_barcode_reference(
+        self,
+        text: str,
+        header_vd: Optional[str] = None,
+        family: Optional[str] = None,
+    ) -> Optional[Dict[str, Any]]:
         digits = re.sub(r"\D", "", text or "")
         if len(digits) == 18:
             if digits.startswith(("80133", "08133", "88133", "90133")):
@@ -396,13 +408,27 @@ class OCREngine:
             if header_vd and len(header_vd) == 8:
                 digits = digits[:6] + header_vd + digits[14:]
 
-        match = re.search(r"(\d{6})(\d{8})([123])(\d{2})(\d)", digits)
+        if family == "lg2026":
+            match = re.search(r"(\d{6})(\d{8})([346])(\d{2})(\d)", digits)
+            type_map = {
+                "3": "Local Council PR",
+                "4": "Ward",
+                "6": "District Council PR",
+            }
+            expected_totals = {
+                "Local Council PR": 2,
+                "Ward": 2,
+                "District Council PR": 2,
+            }
+        else:
+            match = re.search(r"(\d{6})(\d{8})([123])(\d{2})(\d)", digits)
+            type_map = {"1": "National", "2": "Provincial", "3": "Regional"}
+            expected_totals = {"Provincial": 2, "Regional": 2, "National": 3}
+
         if match:
             prefix, vd, b_type_code, page_num_str, suffix = match.groups()
-            type_map = {"1": "National", "2": "Provincial", "3": "Regional"}
             ballot_type = type_map.get(b_type_code, "Provincial")
             page_num = int(page_num_str)
-            expected_totals = {"Provincial": 2, "Regional": 2, "National": 3}
             page_total = expected_totals.get(ballot_type, 2)
             slip_reference = f"{prefix}{vd}{b_type_code}"
 
@@ -789,12 +815,18 @@ class OCREngine:
         from backend.image_enhancer import ImageEnhancer
         return ImageEnhancer().upright_orientation(img)
 
-    def _barcode_from_ocr_lines(self, boxes: List[Dict[str, Any]], lines: List[str], header_vd: Optional[str]):
+    def _barcode_from_ocr_lines(
+        self,
+        boxes: List[Dict[str, Any]],
+        lines: List[str],
+        header_vd: Optional[str],
+        family: Optional[str] = None,
+    ):
         for item in boxes:
-            parsed = self.parse_barcode_reference(item["text"], header_vd)
+            parsed = self.parse_barcode_reference(item["text"], header_vd, family=family)
             if parsed:
                 return parsed
-        return self.parse_barcode_reference("".join(lines), header_vd)
+        return self.parse_barcode_reference("".join(lines), header_vd, family=family)
 
     def _result_header_bottom(
         self,
@@ -876,30 +908,63 @@ class OCREngine:
         digit_backend: str = "heuristic",
         also_cnn_votes: bool = False,
         debug_dir: Optional[str] = None,
+        source_img: Optional[np.ndarray] = None,
     ) -> Dict[str, Any]:
         img = self.upright_image(img)
         if binary is not None:
             binary = self._as_bgr(binary)
+        if source_img is not None:
+            source_img = self.upright_image(source_img)
         h, w = img.shape[:2]
 
         zxing_digits = self.read_zxing_barcode(img)
-        header_boxes, header_lines = self._ocr_region(img, 0, 0, int(h * 0.32), w)
+        header_boxes, header_lines = self._ocr_region(img, 0, 0, int(h * 0.36), w)
 
         header_vd = None
         for text in header_lines:
-            vd_m = re.search(r"VD\s*(\d{8})", text, re.I)
+            vd_m = re.search(r"VD\s*:?\s*(\d{8})", text, re.I)
             if vd_m:
                 header_vd = vd_m.group(1)
                 break
 
+        from backend.lg2026_forms import classify_result_form, extract_lg2026_page
+        from backend.digit_icr import four_box_result_grid_found
+
+        gray_for_class = cv2.cvtColor(img, cv2.COLOR_BGR2GRAY) if len(img.shape) == 3 else img
+        family_info = classify_result_form(header_lines, img=img)
+        if family_info["reason"] == "default_iec":
+            has_grid = four_box_result_grid_found(gray_for_class, int(h * 0.28), int(h * 0.88))
+            family_info = classify_result_form(
+                header_lines, has_four_box_grid=has_grid, img=img
+            )
+
+        barcode_family = "lg2026" if family_info["family"] == "lg2026" else None
         barcode_info = None
         if zxing_digits:
-            barcode_info = self.parse_barcode_reference(zxing_digits, header_vd)
+            barcode_info = self.parse_barcode_reference(
+                zxing_digits, header_vd, family=barcode_family
+            )
 
+        footer_boxes: List[Dict[str, Any]] = []
+        footer_lines: List[str] = []
         if not barcode_info:
             footer_boxes, footer_lines = self._ocr_region(img, int(h * 0.84), 0, h, w)
             barcode_info = self._barcode_from_ocr_lines(
-                header_boxes + footer_boxes, header_lines + footer_lines, header_vd
+                header_boxes + footer_boxes,
+                header_lines + footer_lines,
+                header_vd,
+                family=barcode_family,
+            )
+
+        if family_info["family"] == "lg2026":
+            return extract_lg2026_page(
+                self,
+                img,
+                header_lines=header_lines + footer_lines,
+                barcode_info=barcode_info,
+                ballot_type=family_info.get("ballot_type"),
+                debug_dir=debug_dir,
+                source_img=source_img,
             )
 
         page_num_ocr, page_total_ocr = self._page_from_text(header_lines)

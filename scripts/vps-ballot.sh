@@ -15,13 +15,16 @@ ssh_cmd() {
 }
 
 need() {
-  [[ -n "$CMD" ]] || { echo "usage: $0 deploy|health|teardown|status|backup|restore <file>"; exit 1; }
+  [[ -n "$CMD" ]] || { echo "usage: $0 deploy|health|teardown|status|backup|pull-backup|restore <file>"; exit 1; }
   [[ -f "$PASSFILE" ]] || { echo "Missing $PASSFILE"; exit 1; }
   command -v sshpass >/dev/null || { echo "sshpass is required"; exit 1; }
 }
 
 deploy() {
+  echo "Backing up production DB + files before deploying..."
+  backup
   echo "Syncing isolated stack to $REMOTE_STACK (werent-backend is not touched)..."
+  echo "Docker volumes ballot-ocr-pgdata and ballot-ocr-data are not touched."
   ssh_cmd "sudo mkdir -p '$REMOTE_STACK' && sudo chown ubuntu:ubuntu '$REMOTE_STACK'"
   sshpass -f "$PASSFILE" rsync -az --delete \
     --exclude '.git' \
@@ -30,11 +33,7 @@ deploy() {
     --exclude 'node_modules' \
     --exclude 'frontend/dist' \
     --exclude '.local-secrets' \
-    --exclude 'storage/raw/*' \
-    --exclude 'storage/enhanced/*' \
-    --exclude 'storage/thumbnails/*' \
-    --exclude 'storage/debug' \
-    --exclude 'storage/vps_check' \
+    --exclude 'storage/' \
     --exclude 'backend/digit_finetune/data' \
     --exclude 'backend/digit_finetune/runs' \
     --exclude '__pycache__' \
@@ -78,6 +77,13 @@ health() {
 }
 
 teardown() {
+  if [[ "${2:-}" != "--yes-delete-volumes" ]]; then
+    echo "Refusing to teardown. This deletes the ballot-ocr Docker volumes (Postgres + photos)."
+    echo "If you really want that: $0 teardown --yes-delete-volumes"
+    exit 1
+  fi
+  echo "Backing up production DB + files before teardown..."
+  backup
   echo "Removing isolated ballot-ocr stack only..."
   ssh_cmd "sudo bash -s" <<'EOS'
 set -euo pipefail
@@ -115,26 +121,35 @@ status() {
 
 backup() {
   stamp="$(date -u +%Y%m%dT%H%M%SZ)"
-  echo "Dumping PostgreSQL to $REMOTE_STACK/backups/ballot-$stamp.sql"
-  ssh_cmd "sudo bash -s" <<EOS
-set -euo pipefail
-STACK=$REMOTE_STACK
-mkdir -p "\$STACK/backups"
-sudo docker compose -p ballot-ocr -f "\$STACK/docker-compose.yml" exec -T db \\
-  pg_dump -U ballot -d ballot --no-owner --clean --if-exists --format=plain \\
-  | sudo tee "\$STACK/backups/ballot-$stamp.sql" >/dev/null
-sudo docker compose -p ballot-ocr -f "\$STACK/docker-compose.yml" exec -T db \\
-  pg_dump -U ballot -d ballot --format=custom \\
-  | sudo tee "\$STACK/backups/ballot-$stamp.dump" >/dev/null
-sudo chown -R ubuntu:ubuntu "\$STACK/backups"
-echo "Wrote \$STACK/backups/ballot-$stamp.sql"
-echo "Wrote \$STACK/backups/ballot-$stamp.dump"
-EOS
+  echo "Dumping PostgreSQL + storage volume to $REMOTE_STACK/backups/$stamp"
+  sshpass -f "$PASSFILE" scp -o StrictHostKeyChecking=accept-new \
+    "$ROOT/scripts/remote-ballot-backup.sh" "$HOST:/tmp/remote-ballot-backup.sh"
+  ssh_cmd "sudo bash /tmp/remote-ballot-backup.sh $stamp"
+  echo "Remote backup: $REMOTE_STACK/backups/$stamp"
+}
+
+pull_backup() {
+  stamp="${2:-}"
+  if [[ -z "$stamp" ]]; then
+    stamp="$(ssh_cmd "ls -1 $REMOTE_STACK/backups" | tail -n 1)"
+  fi
+  [[ -n "$stamp" ]] || { echo "No remote backups found"; exit 1; }
+  mkdir -p "$ROOT/backups/$stamp"
+  echo "Pulling $REMOTE_STACK/backups/$stamp -> backups/$stamp"
+  sshpass -f "$PASSFILE" rsync -az \
+    "$HOST:$REMOTE_STACK/backups/$stamp/" "$ROOT/backups/$stamp/"
+  echo "$stamp" > "$ROOT/backups/LATEST"
+  ( cd "$ROOT/backups/$stamp" && sha256sum -c SHA256SUMS 2>/dev/null || shasum -a 256 -c SHA256SUMS )
 }
 
 restore() {
   dump="${2:-}"
-  [[ -n "$dump" ]] || { echo "usage: $0 restore ballot-YYYYMMDDTHHMMSSZ.sql"; exit 1; }
+  [[ -n "$dump" ]] || { echo "usage: $0 restore <file> --yes-restore-production"; exit 1; }
+  if [[ "${3:-}" != "--yes-restore-production" ]]; then
+    echo "Refusing. Restore overwrites the live ballot-ocr database."
+    echo "usage: $0 restore <file> --yes-restore-production"
+    exit 1
+  fi
   echo "Restoring $REMOTE_STACK/backups/$dump"
   ssh_cmd "sudo bash -s" <<EOS
 set -euo pipefail
@@ -155,9 +170,10 @@ need
 case "$CMD" in
   deploy) deploy ;;
   health) health ;;
-  teardown) teardown ;;
+  teardown) teardown "$@" ;;
   status) status ;;
   backup) backup ;;
+  pull-backup) pull_backup "$@" ;;
   restore) restore "$@" ;;
-  *) echo "usage: $0 deploy|health|teardown|status|backup|restore <file>"; exit 1 ;;
+  *) echo "usage: $0 deploy|health|teardown|status|backup|pull-backup|restore <file>"; exit 1 ;;
 esac
