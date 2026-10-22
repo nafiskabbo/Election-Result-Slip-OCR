@@ -223,6 +223,9 @@ def parse_open_votes(text: str) -> Optional[int]:
     elif re.fullmatch(r"\d[bB]", compact or ""):
         # Leading 9 (looks like b) dropped; 8b → 98.
         mapped = "9" + compact[0]
+    elif re.fullmatch(r"[CcZz2]+", compact or ""):
+        # Slashed handwritten 2s often come back as C or Z ("CC" → 22).
+        mapped = re.sub(r"[CcZz]", "2", compact)
     mapped = (
         mapped.replace("Ø", "0")
         .replace("ø", "0")
@@ -441,7 +444,8 @@ def read_open_vote_cell(
         _record_vote_text(candidates, text, 0.74)
     _record_vote_text(candidates, " ".join(texts), 0.72)
     best_len = max((len(str(v)) for v, _c in candidates), default=0)
-    if best_len < 2:
+    need_more = best_len < 2 and (digit_count == 0 or digit_count >= 2)
+    if need_more:
         ink_cell = _ink_bbox_cell(bgr)
         if ink_cell is not None:
             _boxes, ink_lines = engine._ocr_region(
@@ -449,18 +453,20 @@ def read_open_vote_cell(
             )
             ink_texts = [str(item.get("text") or "") for item in _boxes] or list(ink_lines or [])
             _record_vote_text(candidates, " ".join(ink_texts), 0.70)
-        gray = cv2.cvtColor(bgr, cv2.COLOR_BGR2GRAY)
-        clahe = cv2.createCLAHE(clipLimit=2.4, tileGridSize=(8, 8)).apply(gray)
-        up = cv2.resize(clahe, None, fx=3.0, fy=3.0, interpolation=cv2.INTER_CUBIC)
-        _, lines2 = engine._run_ocr(cv2.cvtColor(up, cv2.COLOR_GRAY2BGR), upscale_to=0)
-        _record_vote_text(candidates, " ".join(lines2 or []), 0.66)
-        _, inv = cv2.threshold(gray, 0, 255, cv2.THRESH_BINARY_INV + cv2.THRESH_OTSU)
-        inv_bgr = cv2.cvtColor(inv, cv2.COLOR_GRAY2BGR)
-        _boxes3, lines3 = engine._ocr_region(
-            inv_bgr, 0, 0, inv_bgr.shape[0], inv_bgr.shape[1], upscale_to=260
-        )
-        inv_texts = [str(item.get("text") or "") for item in _boxes3] or list(lines3 or [])
-        _record_vote_text(candidates, " ".join(inv_texts), 0.64)
+        best_len = max((len(str(v)) for v, _c in candidates), default=0)
+        if best_len < 2:
+            gray = cv2.cvtColor(bgr, cv2.COLOR_BGR2GRAY)
+            clahe = cv2.createCLAHE(clipLimit=2.4, tileGridSize=(8, 8)).apply(gray)
+            up = cv2.resize(clahe, None, fx=3.0, fy=3.0, interpolation=cv2.INTER_CUBIC)
+            _, lines2 = engine._run_ocr(cv2.cvtColor(up, cv2.COLOR_GRAY2BGR), upscale_to=0)
+            _record_vote_text(candidates, " ".join(lines2 or []), 0.66)
+            _, inv = cv2.threshold(gray, 0, 255, cv2.THRESH_BINARY_INV + cv2.THRESH_OTSU)
+            inv_bgr = cv2.cvtColor(inv, cv2.COLOR_GRAY2BGR)
+            _boxes3, lines3 = engine._ocr_region(
+                inv_bgr, 0, 0, inv_bgr.shape[0], inv_bgr.shape[1], upscale_to=260
+            )
+            inv_texts = [str(item.get("text") or "") for item in _boxes3] or list(lines3 or [])
+            _record_vote_text(candidates, " ".join(inv_texts), 0.64)
     best_len = max((len(str(v)) for v, _c in candidates), default=0)
     if allow_cnn and (not candidates or best_len < 2):
         cnn_votes, cnn_conf = _cnn_open_digits(bgr)
@@ -477,7 +483,11 @@ def read_open_vote_cell(
     return int(votes), float(min(0.93, max(conf, score)))
 
 
-def _choose_vote(item_votes: Optional[int], crop_votes: Optional[int]) -> int:
+def _choose_vote(
+    item_votes: Optional[int],
+    crop_votes: Optional[int],
+    digit_count: int = 0,
+) -> int:
     """Keep the page-OCR value unless the cell crop clearly completes it."""
     item = None if item_votes in (None, 0) else int(item_votes)
     crop = None if crop_votes in (None, 0) else int(crop_votes)
@@ -490,6 +500,10 @@ def _choose_vote(item_votes: Optional[int], crop_votes: Optional[int]) -> int:
     s_item, s_crop = str(item), str(crop)
     if s_crop == s_item:
         return item
+    # Slashed 22 read as 3 on the page, 22 in the cell. Ink width must look
+    # like 2+ digits so a lone 9 is not upgraded to 94.
+    if len(s_item) == 1 and 10 <= crop <= 99 and digit_count >= 2:
+        return crop
     # Missed leading digit: 8 → 98. Do not accept 60 → 600 or 7 → 707.
     if len(s_crop) == len(s_item) + 1 and s_crop.endswith(s_item):
         if s_crop[0] == "0" or (len(s_item) >= 2 and s_crop.endswith("0") and s_item.endswith("0")):
@@ -523,10 +537,69 @@ def _name_column_right(items: List[Dict[str, Any]], width: int, ballot_type: str
     return int(width * 0.42)
 
 
+def _exclusive_row_bands(
+    rows: List[Dict[str, Any]],
+    height: int,
+) -> List[Tuple[int, int]]:
+    """Split the table into non-overlapping row bands at midpoints between codes."""
+    if not rows:
+        return []
+    bands: List[Tuple[int, int]] = []
+    for index, row in enumerate(rows):
+        fallback = max(28.0, row["y2"] - row["y1"])
+        if index == 0:
+            span = (rows[1]["cy"] - row["cy"]) if len(rows) > 1 else fallback
+            y1 = row["cy"] - span / 2.0
+        else:
+            y1 = (rows[index - 1]["cy"] + row["cy"]) / 2.0
+        if index == len(rows) - 1:
+            span = (row["cy"] - rows[index - 1]["cy"]) if index else fallback
+            y2 = row["cy"] + span / 2.0
+        else:
+            y2 = (row["cy"] + rows[index + 1]["cy"]) / 2.0
+        bands.append((max(0, int(y1)), min(height, int(y2))))
+    return bands
+
+
+def _fill_exclusive_names(
+    items: List[Dict[str, Any]],
+    rows: List[Dict[str, Any]],
+    width: int,
+    height: int,
+) -> List[Dict[str, Any]]:
+    """Keep wrapped name lines in their own row; ignore left-margin graffiti."""
+    bands = _exclusive_row_bands(rows, height)
+    left_margin = width * 0.10
+    for row, (y1, y2) in zip(rows, bands):
+        row["band"] = (y1, y2)
+        bits = []
+        for other in items:
+            if other["cy"] < y1 or other["cy"] >= y2:
+                continue
+            if other["x1"] < left_margin:
+                continue
+            if other["x2"] >= row["label"]["x1"] - 2:
+                continue
+            text = other["text"].strip()
+            if not text or _TOTAL_SKIP_RE.search(text):
+                continue
+            if re.fullmatch(r"[0-9OØIlCcZz\s]{1,5}", text):
+                continue
+            if _WARD_ABBR_RE.search(text) or _IEC_PARTY_RE.search(text):
+                continue
+            bits.append(other)
+        bits.sort(key=lambda item: (item["cy"], item["x1"]))
+        name = re.sub(r"\s+", " ", " ".join(item["text"].strip() for item in bits)).strip(" -")
+        if name:
+            row["party_name"] = name
+    return rows
+
+
 def _party_rows_from_items(
     items: List[Dict[str, Any]],
     ballot_type: str,
     height: int,
+    width: int = 0,
 ) -> List[Dict[str, Any]]:
     rows: List[Dict[str, Any]] = []
     if ballot_type == BALLOT_WARD:
@@ -543,18 +616,9 @@ def _party_rows_from_items(
             if not code or code in used_codes:
                 continue
             used_codes.add(code)
-            name_bits = [
-                other["text"].strip()
-                for other in items
-                if other["x2"] < item["x1"] - 4
-                and abs(other["cy"] - item["cy"]) < max(18.0, (item["y2"] - item["y1"]) * 1.6)
-                and not _TOTAL_SKIP_RE.search(other["text"])
-                and not re.fullmatch(r"[0-9OØIl\s]{1,5}", other["text"].strip())
-            ]
-            name = re.sub(r"\s+", " ", " ".join(name_bits)).strip(" -")
             rows.append(
                 {
-                    "party_name": name or code,
+                    "party_name": code,
                     "party_code": code,
                     "cy": item["cy"],
                     "y1": item["y1"],
@@ -588,6 +652,9 @@ def _party_rows_from_items(
         if deduped and abs(row["cy"] - deduped[-1]["cy"]) < 12 and row["party_code"] == deduped[-1]["party_code"]:
             continue
         deduped.append(row)
+    if ballot_type == BALLOT_WARD and deduped:
+        page_width = width or int(max((item["x2"] for item in items), default=0))
+        _fill_exclusive_names(items, deduped, page_width, height)
     return deduped
 
 
@@ -623,6 +690,12 @@ def _number_on_row(
     if not hits:
         return None, 0.0, None
     hits.sort()
+    if len(hits) >= 2:
+        by_x = sorted(hits, key=lambda row: row[1])
+        if all(len(str(vote)) == 1 for _dy, _cx, vote, _score, _item in by_x[:4]):
+            joined = int("".join(str(vote) for _dy, _cx, vote, _score, _item in by_x[:4]))
+            score = max(score for _dy, _cx, _vote, score, _item in by_x[:4])
+            return joined, max(0.45, min(0.92, score)), by_x[0][4]
     _dy, _cx, votes, score, item = hits[0]
     return votes, max(0.45, min(0.92, score)), item
 
@@ -712,8 +785,12 @@ def _reconcile_totals(totals: Dict[str, Optional[int]]) -> Dict[str, Optional[in
         and int(cast) > int(spoilt)
     ):
         expected_valid = int(cast) - int(spoilt)
-        remnant = valid is None or (
-            int(valid) < 200 and int(valid) + int(spoilt) != int(cast)
+        mismatch = valid is None or int(valid) + int(spoilt) != int(cast)
+        remnant = mismatch and (
+            valid is None
+            or int(valid) < 200
+            or int(valid) > int(cast)
+            or len(str(int(valid))) > len(str(expected_valid))
         )
         if remnant and 0 <= expected_valid <= 9999:
             totals["valid"] = expected_valid
@@ -858,13 +935,16 @@ def extract_lg2026_page(
         slip_ref = None
 
     vote_x1, vote_x2 = _vote_column_bounds(items, w, ballot_type)
-    rows = _party_rows_from_items(items, ballot_type, h)
+    rows = _party_rows_from_items(items, ballot_type, h, width=w)
     party_results: List[Dict[str, Any]] = []
     used_vote_boxes: set = set()
     for index, row in enumerate(rows):
-        pad = max(4.0, (row["y2"] - row["y1"]) * 0.28)
-        y1 = max(0, int(row["y1"] - pad))
-        y2 = min(h, int(row["y2"] + pad))
+        if row.get("band"):
+            y1, y2 = row["band"]
+        else:
+            pad = max(4.0, (row["y2"] - row["y1"]) * 0.28)
+            y1 = max(0, int(row["y1"] - pad))
+            y2 = min(h, int(row["y2"] + pad))
         votes, conf, hit = _number_on_row(
             items,
             y1,
@@ -877,26 +957,35 @@ def extract_lg2026_page(
         if hit:
             used_vote_boxes.add(_item_key(hit))
         crop_votes, crop_conf = 0, 0.0
+        digit_count = 0
         if votes in (None, 0) or (isinstance(votes, int) and votes < 10):
-            x1n = max(0, vote_x1 - int(w * 0.02))
-            x2n = min(w, vote_x1 + int((vote_x2 - vote_x1) * 0.78))
-            tight = img[y1:y2, x1n:x2n]
-            crop_votes, crop_conf = read_open_vote_cell(engine, tight, max_value=999)
-            if crop_votes in (None, 0) or crop_votes < 10:
-                x1 = max(0, vote_x1 - int(w * 0.03))
-                x2 = min(w, vote_x2 + int(w * 0.03))
-                wide = img[y1:y2, x1:x2]
-                wide_votes, wide_conf = read_open_vote_cell(engine, wide, max_value=999)
-                if wide_votes and (crop_votes in (None, 0) or wide_votes >= 10):
-                    crop_votes, crop_conf = wide_votes, wide_conf
-                elif crop_votes in (None, 0):
-                    wide_y1 = max(0, int(row["y1"] - (row["y2"] - row["y1"]) * 0.45))
-                    wide_y2 = min(h, int(row["y2"] + (row["y2"] - row["y1"]) * 0.45))
-                    taller = img[wide_y1:wide_y2, x1:x2]
-                    tall_votes, tall_conf = read_open_vote_cell(engine, taller, max_value=999)
-                    if tall_votes:
-                        crop_votes, crop_conf = tall_votes, tall_conf
-        votes = _choose_vote(votes, crop_votes)
+            if row.get("band"):
+                cell = img[y1:y2, max(0, vote_x1) : min(w, vote_x2)]
+                digit_count = expected_open_digits(cell)
+                crop_votes, crop_conf = read_open_vote_cell(engine, cell, max_value=999)
+            else:
+                x1n = max(0, vote_x1 - int(w * 0.02))
+                x2n = min(w, vote_x1 + int((vote_x2 - vote_x1) * 0.78))
+                tight = img[y1:y2, x1n:x2n]
+                digit_count = expected_open_digits(tight)
+                crop_votes, crop_conf = read_open_vote_cell(engine, tight, max_value=999)
+                if crop_votes in (None, 0) or crop_votes < 10:
+                    x1 = max(0, vote_x1 - int(w * 0.03))
+                    x2 = min(w, vote_x2 + int(w * 0.03))
+                    wide = img[y1:y2, x1:x2]
+                    wide_votes, wide_conf = read_open_vote_cell(engine, wide, max_value=999)
+                    if wide_votes and (crop_votes in (None, 0) or wide_votes >= 10):
+                        crop_votes, crop_conf = wide_votes, wide_conf
+                        digit_count = max(digit_count, expected_open_digits(wide))
+                    elif crop_votes in (None, 0):
+                        wide_y1 = max(0, int(row["y1"] - (row["y2"] - row["y1"]) * 0.45))
+                        wide_y2 = min(h, int(row["y2"] + (row["y2"] - row["y1"]) * 0.45))
+                        taller = img[wide_y1:wide_y2, x1:x2]
+                        tall_votes, tall_conf = read_open_vote_cell(engine, taller, max_value=999)
+                        if tall_votes:
+                            crop_votes, crop_conf = tall_votes, tall_conf
+                            digit_count = max(digit_count, expected_open_digits(taller))
+        votes = _choose_vote(votes, crop_votes, digit_count=digit_count)
         if crop_votes and votes == crop_votes:
             conf = max(conf, crop_conf)
         sig_left = min(w - 8, max(vote_x2 + 4, int(w * 0.70)))
@@ -922,9 +1011,16 @@ def extract_lg2026_page(
         )
 
     is_final_page = page_num == page_total
-    if is_final_page and source_img is not None and source_img.size:
-        items = _merge_source_total_items(engine, source_img, items)
     totals = _totals_from_items(items, w, exclude=used_vote_boxes) if is_final_page else {}
+    totals_ok = (
+        totals.get("valid") not in (None, 0)
+        and totals.get("spoilt") not in (None, 0)
+        and totals.get("cast") not in (None, 0)
+        and int(totals["valid"]) + int(totals["spoilt"]) == int(totals["cast"])
+    )
+    if is_final_page and source_img is not None and source_img.size and not totals_ok:
+        items = _merge_source_total_items(engine, source_img, items)
+        totals = _totals_from_items(items, w, exclude=used_vote_boxes)
     if is_final_page:
         for key, pattern in (
             ("valid", r"TOTAL\s+VALID\s+VOTES"),

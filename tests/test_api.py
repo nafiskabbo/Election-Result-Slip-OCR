@@ -83,6 +83,60 @@ def test_incomplete_slip_approval_blocked_api(client):
     assert "EXPORT BLOCKED" in pdf_res.json()["detail"]
 
 
+def test_upload_lg2026_final_templates_groups_three_slips(client):
+    folder = "sample_slips/final_templates"
+    names = [
+        "WhatsApp Image 2026-10-16 at 13.06.01.jpeg",
+        "WhatsApp Image 2026-10-16 at 13.06.01 (1).jpeg",
+        "WhatsApp Image 2026-10-16 at 13.06.01 (2).jpeg",
+        "WhatsApp Image 2026-10-16 at 13.06.01 (3).jpeg",
+        "WhatsApp Image 2026-10-16 at 13.06.01 (4).jpeg",
+        "WhatsApp Image 2026-10-16 at 13.06.01 (5).jpeg",
+    ]
+    handles = [open(f"{folder}/{name}", "rb") for name in names]
+    try:
+        files = [("files", (name, fh, "image/jpeg")) for name, fh in zip(names, handles)]
+        res = client.post("/api/upload", files=files)
+    finally:
+        for fh in handles:
+            fh.close()
+    assert res.status_code == 200
+    data = res.json()
+    assert data["processed_pages_count"] == 6
+    assert len(data["affected_slips"]) == 3
+
+    by_type = {}
+    for slip_id in data["affected_slips"]:
+        slip = client.get(f"/api/slips/{slip_id}").json()
+        by_type[slip["ballot_type"]] = slip
+        assert slip["total_received_pages"] == 2
+        assert slip["status"] in ("pending_review", "flagged")
+
+    ward = by_type["Ward"]
+    votes = {row["party_code"]: row["votes"] for row in ward["party_results"]}
+    names_by_code = {row["party_code"]: row["party_name"] for row in ward["party_results"]}
+    assert votes["TRAHB"] == 22
+    assert votes["TRAFI"] == 160
+    assert names_by_code["TRAFI"] == "MTOLO AYANDA JUNIOR"
+    assert "PROSPECT" not in names_by_code["TRAFI"]
+    assert "NDLOVU" not in names_by_code["TRAFI"]
+    assert ward["total_valid_votes"] == 631
+    assert ward["total_spoilt_votes"] == 100
+    assert ward["total_votes_cast"] == 731
+
+    local = by_type["Local Council PR"]
+    local_votes = {row["party_code"]: row["votes"] for row in local["party_results"]}
+    assert local_votes["AAN"] == 100
+    assert local_votes["AFI"] == 60
+    assert local_votes["AHB"] == 55
+
+    district = by_type["District Council PR"]
+    district_votes = {row["party_code"]: row["votes"] for row in district["party_results"]}
+    assert district_votes["AAB"] == 250
+    assert district_votes["AAE"] == 420
+    assert district["total_valid_votes"] == 1335
+
+
 def test_replace_and_remove_page_api(client, tmp_path):
     import cv2
     import numpy as np

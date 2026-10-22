@@ -8,6 +8,7 @@ from backend.lg2026_forms import (
     fit_vote_to_digit_count,
     parse_open_votes,
     _choose_vote,
+    _party_rows_from_items,
     _reconcile_totals,
     _snap_ward_abbr,
 )
@@ -68,6 +69,9 @@ def test_parse_open_votes_handles_rewrite_and_lookalikes():
     assert parse_open_votes("b") == 9
     assert parse_open_votes("bb") == 99
     assert parse_open_votes("6于") == 67
+    assert parse_open_votes("CC") == 22
+    assert parse_open_votes("Z2") == 22
+    assert parse_open_votes("2C") == 22
 
 
 def test_snap_ward_abbr():
@@ -87,6 +91,9 @@ def test_choose_vote_completes_missing_leading_digit():
     assert _choose_vote(0, 7001) == 0
     assert _choose_vote(60, 600) == 60
     assert _choose_vote(0, 60) == 60
+    assert _choose_vote(3, 22, digit_count=2) == 22
+    assert _choose_vote(3, 22, digit_count=3) == 22
+    assert _choose_vote(9, 94, digit_count=1) == 9
 
 
 def test_fit_vote_drops_duplicated_loop_zero():
@@ -97,6 +104,37 @@ def test_fit_vote_drops_duplicated_loop_zero():
     assert fit_vote_to_digit_count(10, 1) == 0
     assert fit_vote_to_digit_count(7, 1) == 7
     assert fit_vote_to_digit_count(160, 3) == 160
+
+
+def test_ward_names_stay_inside_their_row():
+    def _item(text, x1, x2, y1, y2):
+        return {
+            "text": text,
+            "score": 1.0,
+            "cx": (x1 + x2) / 2,
+            "cy": (y1 + y2) / 2,
+            "x1": float(x1),
+            "x2": float(x2),
+            "y1": float(y1),
+            "y2": float(y2),
+        }
+
+    items = [
+        _item("MKHIZE NOMBULELO", 137, 278, 742, 762),
+        _item("PROSPECT", 139, 215, 756, 776),
+        _item("TRAAF", 328, 376, 747, 769),
+        _item("MTOLO AYANDA JUNIOR", 136, 298, 790, 816),
+        _item("TRAFI", 324, 373, 788, 816),
+        _item("NDLOVU NOMATHEMBA", 133, 293, 832, 852),
+        _item("ANGEL", 134, 186, 848, 868),
+        _item("TRAHB", 328, 377, 837, 858),
+        _item("REST", 20, 90, 790, 860),
+    ]
+    rows = _party_rows_from_items(items, BALLOT_WARD, height=1000, width=800)
+    by_code = {row["party_code"]: row["party_name"] for row in rows}
+    assert by_code["TRAAF"] == "MKHIZE NOMBULELO PROSPECT"
+    assert by_code["TRAFI"] == "MTOLO AYANDA JUNIOR"
+    assert by_code["TRAHB"] == "NDLOVU NOMATHEMBA ANGEL"
 
 
 def test_reconcile_totals_uses_printed_identity():
@@ -113,3 +151,7 @@ def test_reconcile_totals_uses_printed_identity():
     unread_spoilt = _reconcile_totals({"valid": 731, "spoilt": 1, "cast": 731})
     assert unread_spoilt["cast"] == 731
     assert unread_spoilt["valid"] == 731
+    # Struck-through 1808 in the valid box, rewrite 631 beside it.
+    struck = _reconcile_totals({"valid": 1808, "spoilt": 100, "cast": 731})
+    assert struck["valid"] == 631
+    assert struck["cast"] == 731
